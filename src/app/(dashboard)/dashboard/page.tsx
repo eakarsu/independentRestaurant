@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
 import {
   CalendarDays,
   DollarSign,
@@ -34,7 +35,7 @@ interface Reservation {
 }
 
 export default function DashboardPage() {
-  // Detail sheet states
+  const router = useRouter();
   const [isOrderDetailOpen, setIsOrderDetailOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [isReservationDetailOpen, setIsReservationDetailOpen] = useState(false);
@@ -57,6 +58,7 @@ export default function DashboardPage() {
       change: "+12.5%",
       icon: DollarSign,
       trend: "up",
+      href: "/reports",
     },
     {
       title: "Active Orders",
@@ -64,6 +66,7 @@ export default function DashboardPage() {
       change: "+3 from last hour",
       icon: UtensilsCrossed,
       trend: "up",
+      href: "/orders",
     },
     {
       title: "Reservations Today",
@@ -71,6 +74,7 @@ export default function DashboardPage() {
       change: "5 upcoming",
       icon: CalendarDays,
       trend: "neutral",
+      href: "/reservations",
     },
     {
       title: "Customers Served",
@@ -78,6 +82,7 @@ export default function DashboardPage() {
       change: "+8.2%",
       icon: Users,
       trend: "up",
+      href: "/customers",
     },
   ];
 
@@ -120,10 +125,14 @@ export default function DashboardPage() {
     <div className="flex flex-col h-full">
       <Header title="Dashboard" />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
-        {/* Stats Grid */}
+        {/* Stats Grid - clickable cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {stats.map((stat, index) => (
-            <Card key={index}>
+            <Card
+              key={index}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+              onClick={() => router.push(stat.href)}
+            >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
                 <stat.icon className="h-4 w-4 text-muted-foreground" />
@@ -149,7 +158,9 @@ export default function DashboardPage() {
                   <CardTitle>Recent Orders</CardTitle>
                   <CardDescription>Latest orders in the system</CardDescription>
                 </div>
-                <Button variant="outline" size="sm">View All</Button>
+                <Link href="/orders">
+                  <Button variant="outline" size="sm">View All</Button>
+                </Link>
               </div>
             </CardHeader>
             <CardContent>
@@ -163,7 +174,7 @@ export default function DashboardPage() {
                     <div className="space-y-1">
                       <p className="text-sm font-medium">{order.id}</p>
                       <p className="text-xs text-muted-foreground">
-                        {order.table} • {order.items} items
+                        {order.table} &bull; {order.items} items
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
@@ -184,7 +195,9 @@ export default function DashboardPage() {
                   <CardTitle>Upcoming Reservations</CardTitle>
                   <CardDescription>Next reservations for today</CardDescription>
                 </div>
-                <Button variant="outline" size="sm">View All</Button>
+                <Link href="/reservations">
+                  <Button variant="outline" size="sm">View All</Button>
+                </Link>
               </div>
             </CardHeader>
             <CardContent>
@@ -198,7 +211,7 @@ export default function DashboardPage() {
                     <div className="space-y-1">
                       <p className="text-sm font-medium">{reservation.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        Party of {reservation.party} • {reservation.table}
+                        Party of {reservation.party} &bull; {reservation.table}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-sm">
@@ -239,18 +252,18 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
+        {/* Quick Actions - with navigation */}
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-3">
-              <Button>New Order</Button>
-              <Button variant="outline">Add Reservation</Button>
-              <Button variant="outline">86 an Item</Button>
-              <Button variant="outline">View Kitchen Display</Button>
-              <Button variant="outline">Run End-of-Day Report</Button>
+              <Button onClick={() => router.push("/orders")}>New Order</Button>
+              <Button variant="outline" onClick={() => router.push("/reservations")}>Add Reservation</Button>
+              <Button variant="outline" onClick={() => router.push("/menu")}>86 an Item</Button>
+              <Button variant="outline" onClick={() => router.push("/kitchen")}>View Kitchen Display</Button>
+              <Button variant="outline" onClick={() => router.push("/reports")}>Run End-of-Day Report</Button>
             </div>
           </CardContent>
         </Card>
@@ -271,7 +284,6 @@ export default function DashboardPage() {
                 </DialogHeader>
 
                 <div className="space-y-4">
-                  {/* Order Details */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-4 bg-muted/50 rounded-lg text-center">
                       <p className="text-2xl font-bold">${detailOrder.total.toFixed(2)}</p>
@@ -286,7 +298,10 @@ export default function DashboardPage() {
 
                 <DialogFooter>
                   <Button
-                    onClick={() => setIsOrderDetailOpen(false)}
+                    onClick={() => {
+                      setIsOrderDetailOpen(false);
+                      router.push("/orders");
+                    }}
                     className="w-full"
                   >
                     View Full Order Details
@@ -308,7 +323,6 @@ export default function DashboardPage() {
                 </DialogHeader>
 
                 <div className="space-y-4">
-                  {/* Reservation Details */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="p-4 bg-muted/50 rounded-lg text-center">
                       <div className="flex items-center justify-center gap-1">
@@ -326,7 +340,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Table Assignment */}
                   <div className="p-3 bg-muted/50 rounded-lg text-center">
                     <p className="font-medium">{detailReservation.table}</p>
                     <p className="text-xs text-muted-foreground">Table Assignment</p>
@@ -335,7 +348,10 @@ export default function DashboardPage() {
 
                 <DialogFooter>
                   <Button
-                    onClick={() => setIsReservationDetailOpen(false)}
+                    onClick={() => {
+                      setIsReservationDetailOpen(false);
+                      router.push("/reservations");
+                    }}
                     className="w-full"
                   >
                     View Full Reservation

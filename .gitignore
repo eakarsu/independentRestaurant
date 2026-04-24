@@ -1,41 +1,70 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
 *.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+service-account*.json
+gcp-key*.json
+config.local.*
+*.local
 
-# debug
+# Node
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+.pnpm-store/
+.yarn/cache/
+.yarn/install-state.gz
 
-# env files (can opt-in for committing if needed)
-.env*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# vercel
-.vercel
+# Build outputs
+dist/
+build/
+.next/
+out/
+.nuxt/
+.vite/
+.turbo/
+*.log
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+*.swp
+*.swo
+
+# Large data / uploads
+*.sqlite
+*.sqlite3
+*.db
+data/
+uploads/
+tmp/
+.cache/
+
+# Coverage
+coverage/
+.nyc_output/
+htmlcov/

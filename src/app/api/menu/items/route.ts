@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const categoryId = searchParams.get("categoryId");
     const available = searchParams.get("available");
+    const pagination = getPaginationParams(request);
+    const sort = getSortParams(request, "name");
 
     const where: Record<string, unknown> = {};
 
@@ -18,26 +21,31 @@ export async function GET(request: NextRequest) {
       where.is86d = false;
     }
 
-    const items = await prisma.menuItem.findMany({
-      where,
-      orderBy: { name: "asc" },
-      include: {
-        category: true,
-        modifierGroups: {
-          include: {
-            modifierGroup: {
-              include: {
-                modifiers: true,
+    const [items, total] = await Promise.all([
+      prisma.menuItem.findMany({
+        where,
+        orderBy: { [sort.sortBy]: sort.sortDirection },
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          category: true,
+          modifierGroups: {
+            include: {
+              modifierGroup: {
+                include: {
+                  modifiers: true,
+                },
               },
             },
           },
         },
-      },
-    });
-    return NextResponse.json(items);
+      }),
+      prisma.menuItem.count({ where }),
+    ]);
+
+    return NextResponse.json(paginatedResponse(items, total, pagination));
   } catch (error) {
-    console.error("Error fetching menu items:", error);
-    return NextResponse.json({ error: "Failed to fetch menu items" }, { status: 500 });
+    return handleApiError(error, "Menu Items");
   }
 }
 

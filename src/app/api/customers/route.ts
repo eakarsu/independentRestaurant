@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get("search");
     const vip = searchParams.get("vip");
+    const pagination = getPaginationParams(request);
+    const sort = getSortParams(request, "lastName");
 
     const where: Record<string, unknown> = {};
 
@@ -22,20 +25,25 @@ export async function GET(request: NextRequest) {
       where.vipStatus = true;
     }
 
-    const customers = await prisma.customer.findMany({
-      where,
-      orderBy: { lastName: "asc" },
-      include: {
-        loyaltyPoints: true,
-        _count: {
-          select: { orders: true, reservations: true },
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        orderBy: { [sort.sortBy]: sort.sortDirection },
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          loyaltyPoints: true,
+          _count: {
+            select: { orders: true, reservations: true },
+          },
         },
-      },
-    });
-    return NextResponse.json(customers);
+      }),
+      prisma.customer.count({ where }),
+    ]);
+
+    return NextResponse.json(paginatedResponse(customers, total, pagination));
   } catch (error) {
-    console.error("Error fetching customers:", error);
-    return NextResponse.json({ error: "Failed to fetch customers" }, { status: 500 });
+    return handleApiError(error, "Customers");
   }
 }
 

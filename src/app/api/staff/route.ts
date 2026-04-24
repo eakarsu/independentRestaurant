@@ -1,21 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const staff = await prisma.staff.findMany({
-      orderBy: { firstName: "asc" },
-      include: {
-        user: {
-          select: { email: true, role: true },
+    const pagination = getPaginationParams(request);
+    const sort = getSortParams(request, "firstName");
+
+    const [staff, total] = await Promise.all([
+      prisma.staff.findMany({
+        orderBy: { [sort.sortBy]: sort.sortDirection },
+        skip: pagination.skip,
+        take: pagination.take,
+        include: {
+          user: {
+            select: { email: true, role: true },
+          },
         },
-      },
-    });
-    return NextResponse.json(staff);
+      }),
+      prisma.staff.count(),
+    ]);
+
+    return NextResponse.json(paginatedResponse(staff, total, pagination));
   } catch (error) {
-    console.error("Error fetching staff:", error);
-    return NextResponse.json({ error: "Failed to fetch staff" }, { status: 500 });
+    return handleApiError(error, "Staff");
   }
 }
 
@@ -23,7 +32,6 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Create user first
     const hashedPassword = await bcrypt.hash(body.password || "password123", 10);
     const user = await prisma.user.create({
       data: {
@@ -34,7 +42,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Create staff profile
     const staff = await prisma.staff.create({
       data: {
         userId: user.id,
