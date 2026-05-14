@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { emitOrderStatusChanged } from "@/lib/socket-server";
+import { sendOrderReadyEmail } from "@/lib/email";
 
 export async function GET(
   request: NextRequest,
@@ -42,6 +44,13 @@ export async function PUT(
 ) {
   try {
     const body = await request.json();
+
+    // Fetch the current order so we can detect a status transition
+    const existing = await prisma.order.findUnique({
+      where: { id: params.id },
+      select: { status: true, orderNumber: true, type: true },
+    });
+
     const order = await prisma.order.update({
       where: { id: params.id },
       data: {
@@ -62,6 +71,28 @@ export async function PUT(
         },
       },
     });
+
+    // Emit real-time event if status changed
+    if (existing && body.status && existing.status !== body.status) {
+      emitOrderStatusChanged({
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        previousStatus: existing.status,
+        type: order.type,
+      });
+
+      // Send ready-for-pickup email when order reaches READY status
+      if (order.status === "READY" && order.customer?.email) {
+        sendOrderReadyEmail({
+          orderNumber: order.orderNumber,
+          customerName: `${order.customer.firstName} ${order.customer.lastName}`,
+          customerEmail: order.customer.email,
+          type: order.type,
+        });
+      }
+    }
+
     return NextResponse.json(order);
   } catch (error) {
     console.error("Error updating order:", error);

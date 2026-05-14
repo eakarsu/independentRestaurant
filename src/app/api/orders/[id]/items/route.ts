@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { deductIngredients } from "@/lib/inventory";
 
 export async function POST(
   request: NextRequest,
@@ -53,7 +54,17 @@ export async function POST(
       });
     }
 
-    return NextResponse.json(orderItem, { status: 201 });
+    // Auto-deduct ingredients from inventory based on recipe_ingredients
+    const inventoryAlerts = await deductIngredients(
+      body.menuItemId,
+      body.quantity,
+      params.id
+    );
+
+    return NextResponse.json(
+      { ...orderItem, inventoryAlerts },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Error adding order item:", error);
     return NextResponse.json({ error: "Failed to add order item" }, { status: 500 });

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { generateOrderNumber } from "@/lib/utils";
 import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
+import { emitOrderCreated } from "@/lib/socket-server";
+import { sendOrderConfirmationEmail } from "@/lib/email";
 
 export async function GET(request: NextRequest) {
   try {
@@ -125,6 +127,31 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+
+    // Emit real-time event so kitchen and front-of-house dashboards update instantly
+    emitOrderCreated({
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      type: order.type,
+      total: order.total,
+    });
+
+    // Send confirmation email if we have a customer email address
+    if (order.customer?.email) {
+      sendOrderConfirmationEmail({
+        orderNumber: order.orderNumber,
+        customerName: `${order.customer.firstName} ${order.customer.lastName}`,
+        customerEmail: order.customer.email,
+        total: order.total,
+        items: order.items.map((item) => ({
+          name: item.menuItem.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+        type: order.type,
+        notes: order.notes ?? undefined,
+      });
+    }
 
     return NextResponse.json(order, { status: 201 });
   } catch (error) {
