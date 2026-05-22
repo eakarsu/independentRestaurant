@@ -32,6 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
   { name: "Reservations", href: "/reservations", icon: CalendarDays },
+  { name: "Table Turn Forecast", href: "/table-turn-forecast", icon: CalendarClock },
   { name: "Orders", href: "/orders", icon: ClipboardList },
   { name: "Kitchen Display", href: "/kitchen", icon: ChefHat },
   { name: "Deliveries", href: "/deliveries", icon: Truck },
