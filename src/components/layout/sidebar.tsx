@@ -50,8 +50,7 @@ const navigation = [
   { name: "Notifications", href: "/notifications", icon: Bell },
   { name: "Reports", href: "/reports", icon: BarChart3 },
   { name: "Locations", href: "/locations", icon: MapPin },
-  { name: "AI Features", href: "/ai", icon: Bot },
-  { name: "AI Suite (NEW)", href: "/ai-suite", icon: Bot },
+  { name: "AI", href: "/ai", icon: Bot },
   { name: "Integrations", href: "/integrations", icon: Plug },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

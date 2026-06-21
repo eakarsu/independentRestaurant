@@ -60,7 +60,7 @@ async function runAi<T = any>(
   try {
     raw = await callOpenRouter(systemPrompt, userPrompt, {
       jsonMode: true,
-      maxTokens: 1800,
+      maxTokens: 8000,
       temperature: 0.4,
     });
     const parsed = parseAIJson<T>(raw);
@@ -124,20 +124,24 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        const menuData = items.map((item) => {
-          const salesCount = item.orderItems.reduce((sum, oi) => sum + oi.quantity, 0);
-          const revenue = item.orderItems.reduce((sum, oi) => sum + oi.totalPrice, 0);
-          const margin = item.cost ? ((item.price - item.cost) / item.price) * 100 : null;
-          return {
-            name: item.name,
-            category: item.category?.name || "Uncategorized",
-            price: item.price,
-            cost: item.cost,
-            salesCount,
-            revenue,
-            margin,
-          };
-        });
+        const menuData = items
+          .map((item) => {
+            const salesCount = item.orderItems.reduce((sum, oi) => sum + oi.quantity, 0);
+            const revenue = item.orderItems.reduce((sum, oi) => sum + oi.totalPrice, 0);
+            const margin = item.cost ? ((item.price - item.cost) / item.price) * 100 : null;
+            return {
+              name: item.name,
+              category: item.category?.name || "Uncategorized",
+              price: item.price,
+              cost: item.cost,
+              salesCount,
+              revenue,
+              margin,
+            };
+          })
+          // Top sellers first, capped so the AI response fits within the token limit.
+          .sort((a, b) => b.salesCount - a.salesCount)
+          .slice(0, 40);
 
         const systemPrompt = `You are a restaurant menu optimization expert. Reply STRICT JSON {"recommendations": [{"item","salesCount","revenue","margin","suggestion"}]}.`;
         const userPrompt = `Menu performance:\n${JSON.stringify(menuData)}`;
@@ -202,18 +206,22 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        const inventoryData = ingredients.map((ing) => {
-          const usedMovements = ing.stockMovements.filter((m) => m.type === "USED");
-          const totalUsed = usedMovements.reduce((sum, m) => sum + Math.abs(m.quantity), 0);
-          return {
-            name: ing.name,
-            currentStock: ing.currentStock,
-            unit: ing.unit,
-            parLevel: ing.parLevel,
-            totalUsed14Days: totalUsed,
-            vendor: ing.vendor?.name,
-          };
-        });
+        const inventoryData = ingredients
+          .map((ing) => {
+            const usedMovements = ing.stockMovements.filter((m) => m.type === "USED");
+            const totalUsed = usedMovements.reduce((sum, m) => sum + Math.abs(m.quantity), 0);
+            return {
+              name: ing.name,
+              currentStock: ing.currentStock,
+              unit: ing.unit,
+              parLevel: ing.parLevel,
+              totalUsed14Days: totalUsed,
+              vendor: ing.vendor?.name,
+            };
+          })
+          // Focus on the most depleted items so the response stays within token limits.
+          .sort((a, b) => a.currentStock / (a.parLevel || 1) - b.currentStock / (b.parLevel || 1))
+          .slice(0, 40);
 
         const systemPrompt = `Restaurant inventory expert. Reply STRICT JSON {"predictions":[{"ingredient","currentStock","unit","dailyUsage","daysUntilEmpty","suggestedOrder","urgent","notes"}]}.`;
         const parsed = await runAi<any>(
@@ -296,6 +304,10 @@ export async function POST(request: NextRequest) {
         const items = await prisma.menuItem.findMany({
           where: { cost: { not: null } },
           include: { category: true },
+          // Cap so the JSON response stays within the token limit (264 menu items
+          // would otherwise truncate the AI output).
+          take: 40,
+          orderBy: { price: "desc" },
         });
         const costData = items.map((item) => ({
           name: item.name,

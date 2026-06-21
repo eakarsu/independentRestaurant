@@ -58,9 +58,10 @@ export default function DeliveriesPage() {
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch("/api/orders?type=DELIVERY");
-      const data = await res.json();
-      setOrders(Array.isArray(data) ? data : []);
+      // /api/orders returns a paginated object ({ data, pagination }), not a bare array.
+      const res = await fetch("/api/orders?type=DELIVERY&pageSize=200");
+      const json = await res.json();
+      setOrders(Array.isArray(json) ? json : (json?.data ?? []));
     } catch {
       toast({ title: "Error", description: "Failed to load deliveries", variant: "destructive" });
     } finally {

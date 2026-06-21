@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import Stripe from "stripe";
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
+import { getStripe } from "@/lib/stripe";
 
 /**
  * POST /api/orders/:id/pay
@@ -20,6 +16,14 @@ export async function POST(
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const stripe = getStripe();
+  if (!stripe) {
+    return NextResponse.json(
+      { error: "Payments are not configured. Set STRIPE_SECRET_KEY to enable card payments." },
+      { status: 503 }
+    );
   }
 
   try {

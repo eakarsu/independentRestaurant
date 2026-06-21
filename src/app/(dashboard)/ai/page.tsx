@@ -12,8 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
 import { Bot, Sparkles, TrendingUp, Package, MessageSquare, Megaphone, Calendar, DollarSign, Brain, Loader2 } from "lucide-react";
+import { AISuitePanel } from "@/components/ai/ai-suite-panel";
 
-export default function AIFeaturesPage() {
+function AIToolsPanel() {
   const [loading, setLoading] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, unknown>>({});
   const [reviewInput, setReviewInput] = useState({ rating: 5, comment: "", customerName: "Guest" });
@@ -28,6 +29,16 @@ export default function AIFeaturesPage() {
         body: JSON.stringify({ action, data }),
       });
       const result = await res.json();
+      // Surface server-side failures (e.g. missing OPENROUTER_API_KEY → 503)
+      // instead of silently storing the error object as a "result".
+      if (!res.ok || result?.error) {
+        toast({
+          title: "AI request failed",
+          description: result?.error || `Server returned ${res.status}`,
+          variant: "destructive",
+        });
+        return;
+      }
       setResults((prev) => ({ ...prev, [action]: result }));
       toast({ title: "Success", description: "AI analysis complete" });
     } catch (error) {
@@ -161,9 +172,7 @@ export default function AIFeaturesPage() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <Header title="AI Features" />
-      <div className="flex-1 p-6 space-y-6 overflow-auto">
+    <div className="space-y-6">
         <div className="flex items-center gap-2 mb-6">
           <Bot className="h-8 w-8 text-primary" />
           <div>
@@ -328,6 +337,25 @@ export default function AIFeaturesPage() {
               </CardContent>
             </Card>
           </TabsContent>
+        </Tabs>
+    </div>
+  );
+}
+
+// Unified AI hub: merges "AI Features" (advisory tools) and "AI Suite" (workflows)
+// into a single nav entry with two top-level tabs.
+export default function AIPage() {
+  return (
+    <div className="flex flex-col h-full">
+      <Header title="AI" />
+      <div className="flex-1 overflow-auto p-6">
+        <Tabs defaultValue="tools">
+          <TabsList>
+            <TabsTrigger value="tools"><Bot className="h-4 w-4 mr-1" />AI Tools</TabsTrigger>
+            <TabsTrigger value="suite"><Sparkles className="h-4 w-4 mr-1" />AI Suite</TabsTrigger>
+          </TabsList>
+          <TabsContent value="tools" className="mt-4"><AIToolsPanel /></TabsContent>
+          <TabsContent value="suite" className="mt-4"><AISuitePanel /></TabsContent>
         </Tabs>
       </div>
     </div>

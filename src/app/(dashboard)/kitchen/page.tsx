@@ -38,9 +38,13 @@ export default function KitchenDisplayPage() {
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch("/api/orders?status=CONFIRMED&status=PREPARING");
-      const data = await res.json();
-      setOrders(Array.isArray(data) ? data.filter((o: Order) => ["CONFIRMED", "PREPARING"].includes(o.status)) : []);
+      // /api/orders returns a paginated object ({ data, pagination }), not a bare
+      // array, and only honours a single status param — so fetch a wide page and
+      // filter to the active kitchen statuses client-side.
+      const res = await fetch("/api/orders?pageSize=200");
+      const json = await res.json();
+      const list: Order[] = Array.isArray(json) ? json : (json?.data ?? []);
+      setOrders(list.filter((o: Order) => ["CONFIRMED", "PREPARING"].includes(o.status)));
     } catch (error) {
       console.error("Error fetching orders:", error);
     } finally {

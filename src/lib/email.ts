@@ -11,7 +11,16 @@
 
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazily construct the Resend client. The Resend constructor throws when no API
+// key is provided, so instantiating it at module load would crash any route
+// that merely imports this file (e.g. /api/orders) when RESEND_API_KEY is unset.
+let _resend: Resend | null = null;
+function getResend(): Resend | null {
+  if (!process.env.RESEND_API_KEY) return null;
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
+}
+
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@restaurant.example.com";
 const RESTAURANT_NAME = process.env.RESTAURANT_NAME ?? "Independent Restaurant";
 
@@ -84,6 +93,8 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData): Promise<
   `;
 
   try {
+    const resend = getResend();
+    if (!resend) return;
     await resend.emails.send({
       from: FROM_EMAIL,
       to: data.customerEmail,
@@ -131,6 +142,8 @@ export async function sendOrderReadyEmail(data: {
   `;
 
   try {
+    const resend = getResend();
+    if (!resend) return;
     await resend.emails.send({
       from: FROM_EMAIL,
       to: data.customerEmail,

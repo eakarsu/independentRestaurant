@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import Stripe from "stripe";
+import { getStripe } from "@/lib/stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
-
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "";
 
 /**
  * POST /api/payments/webhook
@@ -18,6 +15,14 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
  * Add STRIPE_WEBHOOK_SECRET to your .env (from `stripe listen` or the dashboard).
  */
 export async function POST(request: NextRequest) {
+  const stripe = getStripe();
+  if (!stripe || !webhookSecret) {
+    return NextResponse.json(
+      { error: "Payments are not configured. Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to enable the webhook." },
+      { status: 503 }
+    );
+  }
+
   const rawBody = await request.arrayBuffer();
   const buf = Buffer.from(rawBody);
   const sig = request.headers.get("stripe-signature") ?? "";

@@ -99,6 +99,47 @@ function balancedJson(content: string): string | null {
 }
 
 /**
+ * Recover a usable object from a JSON response that was truncated mid-output
+ * (e.g. the model hit max_tokens). Trims to the last complete array element /
+ * field and re-balances any open brackets and braces.
+ */
+function salvageTruncatedJson(content: string): string | null {
+  const first = content.indexOf("{");
+  if (first === -1) return null;
+  let s = content.slice(first);
+
+  // Drop a trailing incomplete token after the last element/object boundary.
+  const cut = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (cut > 0) s = s.slice(0, cut + 1);
+
+  // Walk the (possibly still-unbalanced) text and record the open stack.
+  const stack: string[] = [];
+  let inStr = false,
+    esc = false;
+  for (const ch of s) {
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (ch === "\\") {
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = !inStr;
+      continue;
+    }
+    if (inStr) continue;
+    if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  if (inStr) s += '"';
+  while (stack.length) s += stack.pop();
+  return s;
+}
+
+/**
  * Parse JSON returned by the LLM using three strategies in order:
  *   1. direct JSON.parse on the trimmed/fence-stripped content
  *   2. JSON.parse after sanitizing literal newlines inside string values
@@ -129,13 +170,27 @@ export function parseAIJson<T = any>(raw: string): T {
       try {
         return JSON.parse(sanitizeNewlinesInsideStrings(block)) as T;
       } catch {
+        /* fall to next strategy */
+      }
+    }
+  }
+
+  // 4th strategy: salvage a response truncated by max_tokens.
+  const salvaged = salvageTruncatedJson(stripped);
+  if (salvaged) {
+    try {
+      return JSON.parse(salvaged) as T;
+    } catch {
+      try {
+        return JSON.parse(sanitizeNewlinesInsideStrings(salvaged)) as T;
+      } catch {
         /* fall to error */
       }
     }
   }
 
   throw new Error(
-    `parseAIJson: failed to parse AI response after 3 strategies. raw=${raw.slice(0, 240)}…`,
+    `parseAIJson: failed to parse AI response after 4 strategies. raw=${raw.slice(0, 240)}…`,
   );
 }
 
