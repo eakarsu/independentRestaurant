@@ -9,16 +9,34 @@ datasource db {
 
 // ============= USER & AUTH =============
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  password      String
-  role          UserRole  @default(STAFF)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  password    String
+  role        UserRole @default(STAFF)
+  isActive    Boolean  @default(true)
+  authVersion Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  staffProfile  Staff?
-  sessions      Session[]
+  staffProfile    Staff?
+  customerProfile Customer?
+  sessions        Session[]
+  orderEvents     OrderEvent[]
+  resetTokens     PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }
 
 model Session {
@@ -31,34 +49,37 @@ model Session {
 
 enum UserRole {
   ADMIN
+  MERCHANT
   MANAGER
+  OPERATOR
   STAFF
   HOST
   CHEF
+  CUSTOMER
 }
 
 // ============= STAFF MANAGEMENT =============
 model Staff {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  firstName       String
-  lastName        String
-  phone           String?
-  position        String
-  hourlyRate      Float
-  hireDate        DateTime @default(now())
-  status          StaffStatus @default(ACTIVE)
+  id         String      @id @default(cuid())
+  userId     String      @unique
+  firstName  String
+  lastName   String
+  phone      String?
+  position   String
+  hourlyRate Float
+  hireDate   DateTime    @default(now())
+  status     StaffStatus @default(ACTIVE)
 
-  user            User     @relation(fields: [userId], references: [id])
-  schedules       Schedule[]
-  timeClock       TimeClock[]
-  tips            TipDistribution[]
-  performance     PerformanceRecord[]
-  training        TrainingRecord[]
-  orders          Order[]
+  user        User                @relation(fields: [userId], references: [id])
+  schedules   Schedule[]
+  timeClock   TimeClock[]
+  tips        TipDistribution[]
+  performance PerformanceRecord[]
+  training    TrainingRecord[]
+  orders      Order[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum StaffStatus {
@@ -69,73 +90,73 @@ enum StaffStatus {
 }
 
 model Schedule {
-  id          String   @id @default(cuid())
-  staffId     String
-  date        DateTime
-  startTime   DateTime
-  endTime     DateTime
-  position    String
-  notes       String?
+  id        String   @id @default(cuid())
+  staffId   String
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  position  String
+  notes     String?
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model TimeClock {
-  id          String   @id @default(cuid())
-  staffId     String
-  clockIn     DateTime
-  clockOut    DateTime?
-  breakStart  DateTime?
-  breakEnd    DateTime?
-  totalHours  Float?
+  id         String    @id @default(cuid())
+  staffId    String
+  clockIn    DateTime
+  clockOut   DateTime?
+  breakStart DateTime?
+  breakEnd   DateTime?
+  totalHours Float?
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model TipDistribution {
-  id          String   @id @default(cuid())
-  staffId     String
-  date        DateTime
-  amount      Float
-  source      String   // cash, card, pooled
+  id      String   @id @default(cuid())
+  staffId String
+  date    DateTime
+  amount  Float
+  source  String // cash, card, pooled
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model PerformanceRecord {
-  id          String   @id @default(cuid())
-  staffId     String
-  date        DateTime
-  metric      String
-  value       Float
-  notes       String?
+  id      String   @id @default(cuid())
+  staffId String
+  date    DateTime
+  metric  String
+  value   Float
+  notes   String?
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model TrainingRecord {
-  id            String   @id @default(cuid())
-  staffId       String
-  trainingName  String
-  completedAt   DateTime?
-  expiresAt     DateTime?
-  status        TrainingStatus @default(PENDING)
-  notes         String?
+  id           String         @id @default(cuid())
+  staffId      String
+  trainingName String
+  completedAt  DateTime?
+  expiresAt    DateTime?
+  status       TrainingStatus @default(PENDING)
+  notes        String?
 
-  staff         Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum TrainingStatus {
@@ -147,19 +168,19 @@ enum TrainingStatus {
 
 // ============= RESERVATION MANAGEMENT =============
 model Table {
-  id            String   @id @default(cuid())
-  number        Int      @unique
-  capacity      Int
-  section       String
-  status        TableStatus @default(AVAILABLE)
-  posX          Float?
-  posY          Float?
+  id       String      @id @default(cuid())
+  number   Int         @unique
+  capacity Int
+  section  String
+  status   TableStatus @default(AVAILABLE)
+  posX     Float?
+  posY     Float?
 
-  reservations  Reservation[]
-  orders        Order[]
+  reservations Reservation[]
+  orders       Order[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum TableStatus {
@@ -171,7 +192,7 @@ enum TableStatus {
 }
 
 model Reservation {
-  id              String   @id @default(cuid())
+  id              String            @id @default(cuid())
   customerId      String?
   customerName    String
   customerPhone   String
@@ -183,13 +204,13 @@ model Reservation {
   status          ReservationStatus @default(PENDING)
   specialOccasion String?
   notes           String?
-  source          String   @default("direct") // direct, phone, online, ai_bot
+  source          String            @default("direct") // direct, phone, online, ai_bot
 
-  customer        Customer? @relation(fields: [customerId], references: [id])
-  table           Table?   @relation(fields: [tableId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  table    Table?    @relation(fields: [tableId], references: [id])
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum ReservationStatus {
@@ -202,17 +223,17 @@ enum ReservationStatus {
 }
 
 model Waitlist {
-  id              String   @id @default(cuid())
-  customerName    String
-  customerPhone   String
-  partySize       Int
-  estimatedWait   Int      // minutes
-  quotedTime      DateTime?
-  notes           String?
-  status          WaitlistStatus @default(WAITING)
+  id            String         @id @default(cuid())
+  customerName  String
+  customerPhone String
+  partySize     Int
+  estimatedWait Int // minutes
+  quotedTime    DateTime?
+  notes         String?
+  status        WaitlistStatus @default(WAITING)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum WaitlistStatus {
@@ -224,156 +245,157 @@ enum WaitlistStatus {
 
 // ============= MENU MANAGEMENT =============
 model MenuCategory {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   name        String
   description String?
-  sortOrder   Int      @default(0)
-  isActive    Boolean  @default(true)
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
 
-  items       MenuItem[]
+  items MenuItem[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MenuItem {
-  id              String   @id @default(cuid())
-  categoryId      String
-  name            String
-  description     String?
-  price           Float
-  cost            Float?
-  imageUrl        String?
-  allergens       String[] // Array of allergen codes
-  isAvailable     Boolean  @default(true)
-  is86d           Boolean  @default(false)
-  isSpecial       Boolean  @default(false)
+  id               String    @id @default(cuid())
+  categoryId       String
+  name             String
+  description      String?
+  price            Float
+  cost             Float?
+  imageUrl         String?
+  allergens        String[] // Array of allergen codes
+  isAvailable      Boolean   @default(true)
+  is86d            Boolean   @default(false)
+  isSpecial        Boolean   @default(false)
   specialStartDate DateTime?
-  specialEndDate  DateTime?
-  calories        Int?
-  prepTime        Int?     // minutes
+  specialEndDate   DateTime?
+  calories         Int?
+  prepTime         Int? // minutes
 
-  category        MenuCategory @relation(fields: [categoryId], references: [id])
-  modifierGroups  MenuItemModifierGroup[]
-  ingredients     MenuItemIngredient[]
-  orderItems      OrderItem[]
-  recipe          Recipe?
+  category         MenuCategory             @relation(fields: [categoryId], references: [id])
+  modifierGroups   MenuItemModifierGroup[]
+  ingredients      MenuItemIngredient[]
+  orderItems       OrderItem[]
+  recipe           Recipe?
   priceSuggestions DynamicPriceSuggestion[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ModifierGroup {
-  id          String   @id @default(cuid())
-  name        String
-  required    Boolean  @default(false)
-  minSelect   Int      @default(0)
-  maxSelect   Int      @default(1)
+  id        String  @id @default(cuid())
+  name      String
+  required  Boolean @default(false)
+  minSelect Int     @default(0)
+  maxSelect Int     @default(1)
 
-  modifiers   Modifier[]
-  menuItems   MenuItemModifierGroup[]
+  modifiers Modifier[]
+  menuItems MenuItemModifierGroup[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Modifier {
-  id              String   @id @default(cuid())
+  id              String  @id @default(cuid())
   groupId         String
   name            String
-  priceAdjustment Float    @default(0)
-  isDefault       Boolean  @default(false)
-  isAvailable     Boolean  @default(true)
+  priceAdjustment Float   @default(0)
+  isDefault       Boolean @default(false)
+  isAvailable     Boolean @default(true)
 
-  group           ModifierGroup @relation(fields: [groupId], references: [id])
+  group              ModifierGroup       @relation(fields: [groupId], references: [id])
   orderItemModifiers OrderItemModifier[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MenuItemModifierGroup {
-  id              String   @id @default(cuid())
+  id              String @id @default(cuid())
   menuItemId      String
   modifierGroupId String
 
-  menuItem        MenuItem      @relation(fields: [menuItemId], references: [id])
-  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id])
+  menuItem      MenuItem      @relation(fields: [menuItemId], references: [id])
+  modifierGroup ModifierGroup @relation(fields: [modifierGroupId], references: [id])
 
   @@unique([menuItemId, modifierGroupId])
 }
 
 // ============= INVENTORY MANAGEMENT =============
 model Ingredient {
-  id              String   @id @default(cuid())
-  name            String
-  unit            String   // kg, lbs, units, etc.
-  currentStock    Float    @default(0)
-  parLevel        Float    @default(0)
-  reorderPoint    Float    @default(0)
-  cost            Float    @default(0)
-  vendorId        String?
+  id           String  @id @default(cuid())
+  name         String
+  unit         String // kg, lbs, units, etc.
+  currentStock Float   @default(0)
+  parLevel     Float   @default(0)
+  reorderPoint Float   @default(0)
+  cost         Float   @default(0)
+  vendorId     String?
 
-  vendor          Vendor?  @relation(fields: [vendorId], references: [id])
-  menuItems       MenuItemIngredient[]
-  stockMovements  StockMovement[]
-  purchaseItems   PurchaseOrderItem[]
-  wasteRecords    WasteRecord[]
+  vendor           Vendor?                    @relation(fields: [vendorId], references: [id])
+  menuItems        MenuItemIngredient[]
+  stockMovements   StockMovement[]
+  purchaseItems    PurchaseOrderItem[]
+  wasteRecords     WasteRecord[]
+  reservationLines InventoryReservationLine[]
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model MenuItemIngredient {
-  id            String   @id @default(cuid())
-  menuItemId    String
-  ingredientId  String
-  quantity      Float
-  unit          String
+  id           String @id @default(cuid())
+  menuItemId   String
+  ingredientId String
+  quantity     Float
+  unit         String
 
-  menuItem      MenuItem   @relation(fields: [menuItemId], references: [id])
-  ingredient    Ingredient @relation(fields: [ingredientId], references: [id])
+  menuItem   MenuItem   @relation(fields: [menuItemId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
 
   @@unique([menuItemId, ingredientId])
 }
 
 model Vendor {
-  id            String   @id @default(cuid())
-  name          String
-  contactName   String?
-  email         String?
-  phone         String?
-  address       String?
-  paymentTerms  String?
-  notes         String?
-  isActive      Boolean  @default(true)
+  id           String  @id @default(cuid())
+  name         String
+  contactName  String?
+  email        String?
+  phone        String?
+  address      String?
+  paymentTerms String?
+  notes        String?
+  isActive     Boolean @default(true)
 
-  ingredients   Ingredient[]
+  ingredients    Ingredient[]
   purchaseOrders PurchaseOrder[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model PurchaseOrder {
-  id            String   @id @default(cuid())
-  vendorId      String
-  orderNumber   String   @unique
-  status        PurchaseOrderStatus @default(DRAFT)
-  orderDate     DateTime @default(now())
-  expectedDate  DateTime?
-  receivedDate  DateTime?
-  subtotal      Float    @default(0)
-  tax           Float    @default(0)
-  total         Float    @default(0)
-  notes         String?
+  id           String              @id @default(cuid())
+  vendorId     String
+  orderNumber  String              @unique
+  status       PurchaseOrderStatus @default(DRAFT)
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+  subtotal     Float               @default(0)
+  tax          Float               @default(0)
+  total        Float               @default(0)
+  notes        String?
 
-  vendor        Vendor   @relation(fields: [vendorId], references: [id])
-  items         PurchaseOrderItem[]
+  vendor Vendor              @relation(fields: [vendorId], references: [id])
+  items  PurchaseOrderItem[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum PurchaseOrderStatus {
@@ -386,7 +408,7 @@ enum PurchaseOrderStatus {
 }
 
 model PurchaseOrderItem {
-  id              String   @id @default(cuid())
+  id              String @id @default(cuid())
   purchaseOrderId String
   ingredientId    String
   quantity        Float
@@ -394,23 +416,23 @@ model PurchaseOrderItem {
   totalPrice      Float
   receivedQty     Float?
 
-  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
-  ingredient      Ingredient    @relation(fields: [ingredientId], references: [id])
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  ingredient    Ingredient    @relation(fields: [ingredientId], references: [id])
 
-  createdAt       DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model StockMovement {
-  id            String   @id @default(cuid())
-  ingredientId  String
-  type          StockMovementType
-  quantity      Float
-  reason        String?
-  reference     String?  // PO number, order number, etc.
+  id           String            @id @default(cuid())
+  ingredientId String
+  type         StockMovementType
+  quantity     Float
+  reason       String?
+  reference    String? // PO number, order number, etc.
 
-  ingredient    Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 enum StockMovementType {
@@ -422,47 +444,63 @@ enum StockMovementType {
 }
 
 model WasteRecord {
-  id            String   @id @default(cuid())
-  ingredientId  String
-  quantity      Float
-  reason        String
-  cost          Float
-  recordedBy    String?
+  id           String  @id @default(cuid())
+  ingredientId String
+  quantity     Float
+  reason       String
+  cost         Float
+  recordedBy   String?
 
-  ingredient    Ingredient @relation(fields: [ingredientId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // ============= ORDER MANAGEMENT =============
 model Order {
-  id            String   @id @default(cuid())
-  orderNumber   String   @unique
-  tableId       String?
-  customerId    String?
-  staffId       String?
-  type          OrderType @default(DINE_IN)
-  status        OrderStatus @default(PENDING)
-  subtotal      Float    @default(0)
-  tax           Float    @default(0)
-  discount      Float    @default(0)
-  tip           Float    @default(0)
-  total         Float    @default(0)
-  paymentStatus PaymentStatus @default(UNPAID)
-  paymentMethod String?
-  notes         String?
-  source        String   @default("pos") // pos, online, phone, delivery_app
+  id              String        @id @default(cuid())
+  orderNumber     String        @unique
+  tableId         String?
+  customerId      String?
+  staffId         String?
+  type            OrderType     @default(DINE_IN)
+  status          OrderStatus   @default(PENDING)
+  subtotal        Float         @default(0)
+  tax             Float         @default(0)
+  discount        Float         @default(0)
+  tip             Float         @default(0)
+  total           Float         @default(0)
+  paymentStatus   PaymentStatus @default(UNPAID)
+  paymentMethod   String?
+  notes           String?
+  source          String        @default("pos") // pos, online, phone, delivery_app
+  currency        String        @default("USD")
+  idempotencyKey  String?       @unique
+  requestHash     String?
+  version         Int           @default(1)
+  providerOrderId String?
+  lastError       String?
+  cancelledAt     DateTime?
+  completedAt     DateTime?
 
-  table         Table?   @relation(fields: [tableId], references: [id])
-  customer      Customer? @relation(fields: [customerId], references: [id])
-  staff         Staff?   @relation(fields: [staffId], references: [id])
-  items         OrderItem[]
-  payments      Payment[]
-  delivery      DeliveryInfo?
-  splitChecks   SplitCheck[]
+  table                 Table?                 @relation(fields: [tableId], references: [id])
+  customer              Customer?              @relation(fields: [customerId], references: [id])
+  staff                 Staff?                 @relation(fields: [staffId], references: [id])
+  items                 OrderItem[]
+  payments              Payment[]
+  delivery              DeliveryInfo?
+  splitChecks           SplitCheck[]
+  events                OrderEvent[]
+  inventoryReservations InventoryReservation[]
+  paymentAttempts       PaymentAttempt[]
+  refunds               Refund[]
+  outboxEvents          OutboxEvent[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, createdAt])
+  @@index([status, updatedAt])
 }
 
 enum OrderType {
@@ -475,22 +513,196 @@ enum OrderType {
 enum OrderStatus {
   PENDING
   CONFIRMED
+  PAYMENT_PENDING
+  PAYMENT_FAILED
   PREPARING
   READY
   SERVED
   COMPLETED
+  FULFILLMENT_FAILED
+  EXCEPTION
+  REFUND_PENDING
+  REFUNDED
   CANCELLED
 }
 
 enum PaymentStatus {
   UNPAID
+  AUTHORIZING
+  FAILED
   PARTIAL
   PAID
+  PARTIALLY_REFUNDED
   REFUNDED
 }
 
+model OrderEvent {
+  id             String       @id @default(cuid())
+  orderId        String
+  sequence       Int
+  type           String
+  fromStatus     OrderStatus?
+  toStatus       OrderStatus?
+  actorUserId    String?
+  actorRole      String
+  idempotencyKey String
+  payload        Json
+  previousHash   String?
+  hash           String
+  createdAt      DateTime     @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId, sequence])
+  @@unique([orderId, idempotencyKey])
+  @@index([orderId, createdAt])
+}
+
+model InventoryReservation {
+  id             String                     @id @default(cuid())
+  orderId        String
+  provider       String
+  providerRef    String?
+  idempotencyKey String                     @unique
+  status         InventoryReservationStatus @default(RESERVED)
+  expiresAt      DateTime?
+  committedAt    DateTime?
+  releasedAt     DateTime?
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  order Order                      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  lines InventoryReservationLine[]
+
+  @@index([orderId, status])
+}
+
+model InventoryReservationLine {
+  id            String @id @default(cuid())
+  reservationId String
+  ingredientId  String
+  quantity      Float
+
+  reservation InventoryReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  ingredient  Ingredient           @relation(fields: [ingredientId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, ingredientId])
+}
+
+enum InventoryReservationStatus {
+  RESERVED
+  COMMITTED
+  RELEASED
+  FAILED
+}
+
+model PaymentAttempt {
+  id             String               @id @default(cuid())
+  orderId        String
+  provider       String
+  providerRef    String?
+  idempotencyKey String               @unique
+  amountCents    Int
+  currency       String
+  status         PaymentAttemptStatus @default(PENDING)
+  failureCode    String?
+  failureMessage String?
+  resumeStatus   OrderStatus?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerRef])
+  @@index([orderId, status])
+}
+
+enum PaymentAttemptStatus {
+  PENDING
+  REQUIRES_ACTION
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model Refund {
+  id             String       @id @default(cuid())
+  orderId        String
+  provider       String
+  providerRef    String?
+  idempotencyKey String       @unique
+  amountCents    Int
+  currency       String
+  reason         String
+  status         RefundStatus @default(PENDING)
+  requestedById  String?
+  createdAt      DateTime     @default(now())
+  completedAt    DateTime?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerRef])
+  @@index([orderId, createdAt])
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model WebhookEvent {
+  id          String        @id @default(cuid())
+  provider    String
+  eventId     String
+  eventType   String
+  payloadHash String
+  status      WebhookStatus @default(RECEIVED)
+  attempts    Int           @default(0)
+  error       String?
+  receivedAt  DateTime      @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventId])
+  @@index([status, receivedAt])
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+model OutboxEvent {
+  id             String       @id @default(cuid())
+  orderId        String?
+  topic          String
+  idempotencyKey String       @unique
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  availableAt    DateTime     @default(now())
+  leasedUntil    DateTime?
+  lastError      String?
+  createdAt      DateTime     @default(now())
+  processedAt    DateTime?
+
+  order Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([status, availableAt])
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  DEAD_LETTER
+}
+
 model OrderItem {
-  id            String   @id @default(cuid())
+  id            String          @id @default(cuid())
   orderId       String
   menuItemId    String
   quantity      Int
@@ -501,13 +713,13 @@ model OrderItem {
   sentToKitchen DateTime?
   preparedAt    DateTime?
 
-  order         Order    @relation(fields: [orderId], references: [id])
-  menuItem      MenuItem @relation(fields: [menuItemId], references: [id])
-  modifiers     OrderItemModifier[]
+  order           Order               @relation(fields: [orderId], references: [id])
+  menuItem        MenuItem            @relation(fields: [menuItemId], references: [id])
+  modifiers       OrderItemModifier[]
   splitCheckItems SplitCheckItem[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum OrderItemStatus {
@@ -520,18 +732,18 @@ enum OrderItemStatus {
 }
 
 model OrderItemModifier {
-  id            String   @id @default(cuid())
-  orderItemId   String
-  modifierId    String
+  id              String @id @default(cuid())
+  orderItemId     String
+  modifierId      String
   priceAdjustment Float
 
-  orderItem     OrderItem @relation(fields: [orderItemId], references: [id])
-  modifier      Modifier  @relation(fields: [modifierId], references: [id])
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  modifier  Modifier  @relation(fields: [modifierId], references: [id])
 }
 
 model DeliveryInfo {
-  id              String   @id @default(cuid())
-  orderId         String   @unique
+  id              String    @id @default(cuid())
+  orderId         String    @unique
   address         String
   apartmentUnit   String?
   city            String
@@ -542,100 +754,102 @@ model DeliveryInfo {
   driverPhone     String?
   estimatedTime   DateTime?
   deliveredAt     DateTime?
-  platform        String?  // DoorDash, UberEats, etc.
+  platform        String? // DoorDash, UberEats, etc.
   platformOrderId String?
 
-  order           Order    @relation(fields: [orderId], references: [id])
+  order Order @relation(fields: [orderId], references: [id])
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Payment {
-  id            String   @id @default(cuid())
-  orderId       String
-  amount        Float
-  method        String   // cash, card, etc.
-  reference     String?  // transaction ID
-  status        String   @default("completed")
-  splitCheckId  String?  // Link to split check if part of a split
+  id           String  @id @default(cuid())
+  orderId      String
+  amount       Float
+  method       String // cash, card, etc.
+  reference    String? @unique // transaction ID
+  status       String  @default("completed")
+  splitCheckId String? // Link to split check if part of a split
 
-  order         Order    @relation(fields: [orderId], references: [id])
-  splitCheck    SplitCheck? @relation(fields: [splitCheckId], references: [id])
+  order      Order       @relation(fields: [orderId], references: [id])
+  splitCheck SplitCheck? @relation(fields: [splitCheckId], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model SplitCheck {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   orderId       String
   guestName     String?
-  guestNumber   Int      // Guest 1, Guest 2, etc.
-  subtotal      Float    @default(0)
-  tax           Float    @default(0)
-  tip           Float    @default(0)
-  total         Float    @default(0)
-  isPaid        Boolean  @default(false)
+  guestNumber   Int // Guest 1, Guest 2, etc.
+  subtotal      Float     @default(0)
+  tax           Float     @default(0)
+  tip           Float     @default(0)
+  total         Float     @default(0)
+  isPaid        Boolean   @default(false)
   paidAt        DateTime?
   paymentMethod String?
 
-  order         Order    @relation(fields: [orderId], references: [id])
-  items         SplitCheckItem[]
-  payments      Payment[]
+  order    Order            @relation(fields: [orderId], references: [id])
+  items    SplitCheckItem[]
+  payments Payment[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model SplitCheckItem {
-  id            String   @id @default(cuid())
-  splitCheckId  String
-  orderItemId   String
-  quantity      Int      // How many of this item go to this guest
-  amount        Float
+  id           String @id @default(cuid())
+  splitCheckId String
+  orderItemId  String
+  quantity     Int // How many of this item go to this guest
+  amount       Float
 
-  splitCheck    SplitCheck @relation(fields: [splitCheckId], references: [id])
-  orderItem     OrderItem  @relation(fields: [orderItemId], references: [id])
+  splitCheck SplitCheck @relation(fields: [splitCheckId], references: [id])
+  orderItem  OrderItem  @relation(fields: [orderItemId], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // ============= CUSTOMER MANAGEMENT =============
 model Customer {
-  id            String   @id @default(cuid())
-  firstName     String
-  lastName      String
-  email         String?  @unique
-  phone         String?
-  address       String?
-  birthday      DateTime?
-  anniversary   DateTime?
-  dietaryPrefs  String[]
-  allergens     String[]
-  notes         String?
-  vipStatus     Boolean  @default(false)
+  id           String    @id @default(cuid())
+  userId       String?   @unique
+  firstName    String
+  lastName     String
+  email        String?   @unique
+  phone        String?
+  address      String?
+  birthday     DateTime?
+  anniversary  DateTime?
+  dietaryPrefs String[]
+  allergens    String[]
+  notes        String?
+  vipStatus    Boolean   @default(false)
 
   orders        Order[]
   reservations  Reservation[]
   loyaltyPoints LoyaltyPoints?
   feedback      Feedback[]
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model LoyaltyPoints {
-  id            String   @id @default(cuid())
-  customerId    String   @unique
-  points        Int      @default(0)
-  tier          LoyaltyTier @default(BRONZE)
-  lifetimePoints Int     @default(0)
+  id             String      @id @default(cuid())
+  customerId     String      @unique
+  points         Int         @default(0)
+  tier           LoyaltyTier @default(BRONZE)
+  lifetimePoints Int         @default(0)
 
-  customer      Customer @relation(fields: [customerId], references: [id])
-  transactions  LoyaltyTransaction[]
+  customer     Customer             @relation(fields: [customerId], references: [id])
+  transactions LoyaltyTransaction[]
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum LoyaltyTier {
@@ -646,119 +860,119 @@ enum LoyaltyTier {
 }
 
 model LoyaltyTransaction {
-  id            String   @id @default(cuid())
-  loyaltyId     String
-  points        Int
-  type          String   // earned, redeemed, expired, bonus
-  description   String?
+  id          String  @id @default(cuid())
+  loyaltyId   String
+  points      Int
+  type        String // earned, redeemed, expired, bonus
+  description String?
 
-  loyalty       LoyaltyPoints @relation(fields: [loyaltyId], references: [id])
+  loyalty LoyaltyPoints @relation(fields: [loyaltyId], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Feedback {
-  id            String   @id @default(cuid())
-  customerId    String?
-  source        String   // in_app, google, yelp, etc.
-  rating        Int
-  comment       String?
-  response      String?
-  respondedAt   DateTime?
+  id          String    @id @default(cuid())
+  customerId  String?
+  source      String // in_app, google, yelp, etc.
+  rating      Int
+  comment     String?
+  response    String?
+  respondedAt DateTime?
 
-  customer      Customer? @relation(fields: [customerId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============= AI & ANALYTICS =============
 model AIRecommendation {
-  id            String   @id @default(cuid())
-  type          String   // menu_price, inventory, schedule, marketing
-  title         String
-  description   String
-  data          Json?
-  status        String   @default("pending") // pending, applied, dismissed
-  appliedAt     DateTime?
+  id          String    @id @default(cuid())
+  type        String // menu_price, inventory, schedule, marketing
+  title       String
+  description String
+  data        Json?
+  status      String    @default("pending") // pending, applied, dismissed
+  appliedAt   DateTime?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model DemandForecast {
-  id            String   @id @default(cuid())
-  date          DateTime
-  dayOfWeek     Int
-  hour          Int?
-  predictedCovers Int
+  id               String   @id @default(cuid())
+  date             DateTime
+  dayOfWeek        Int
+  hour             Int?
+  predictedCovers  Int
   predictedRevenue Float?
-  confidence    Float
+  confidence       Float
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model SalesReport {
-  id            String   @id @default(cuid())
-  date          DateTime @unique
-  totalOrders   Int
-  totalRevenue  Float
-  totalTax      Float
-  totalTips     Float
-  totalDiscount Float
-  avgOrderValue Float
-  topItems      Json?
+  id              String   @id @default(cuid())
+  date            DateTime @unique
+  totalOrders     Int
+  totalRevenue    Float
+  totalTax        Float
+  totalTips       Float
+  totalDiscount   Float
+  avgOrderValue   Float
+  topItems        Json?
   hourlyBreakdown Json?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // ============= INTEGRATIONS =============
 model Integration {
-  id            String   @id @default(cuid())
-  type          String   // pos, delivery, payment, accounting
-  name          String
-  isActive      Boolean  @default(false)
-  config        Json?
-  lastSync      DateTime?
+  id       String    @id @default(cuid())
+  type     String // pos, delivery, payment, accounting
+  name     String
+  isActive Boolean   @default(false)
+  config   Json?
+  lastSync DateTime?
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model IntegrationLog {
-  id            String   @id @default(cuid())
+  id            String  @id @default(cuid())
   integrationId String
   action        String
-  status        String   // success, error
+  status        String // success, error
   message       String?
   data          Json?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 // ============= PROMOTIONS & DISCOUNTS =============
 model Promotion {
-  id              String   @id @default(cuid())
-  name            String
-  description     String?
-  code            String?  @unique
-  type            PromotionType
-  value           Float    // percentage or fixed amount
-  minOrderAmount  Float?   // minimum order amount to apply
-  maxDiscount     Float?   // max discount for percentage type
-  startDate       DateTime
-  endDate         DateTime
-  isActive        Boolean  @default(true)
-  usageLimit      Int?     // max number of uses
-  usageCount      Int      @default(0)
-  applicableTo    String[] // "all", category IDs, or menu item IDs
-  dayOfWeek       Int[]    // 0-6 for specific days, empty for all
-  startTime       String?  // "17:00" for happy hour start
-  endTime         String?  // "19:00" for happy hour end
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  code           String?       @unique
+  type           PromotionType
+  value          Float // percentage or fixed amount
+  minOrderAmount Float? // minimum order amount to apply
+  maxDiscount    Float? // max discount for percentage type
+  startDate      DateTime
+  endDate        DateTime
+  isActive       Boolean       @default(true)
+  usageLimit     Int? // max number of uses
+  usageCount     Int           @default(0)
+  applicableTo   String[] // "all", category IDs, or menu item IDs
+  dayOfWeek      Int[] // 0-6 for specific days, empty for all
+  startTime      String? // "17:00" for happy hour start
+  endTime        String? // "19:00" for happy hour end
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum PromotionType {
@@ -771,21 +985,21 @@ enum PromotionType {
 
 // ============= NOTIFICATIONS =============
 model Notification {
-  id            String   @id @default(cuid())
-  type          NotificationType
-  channel       NotificationChannel
-  recipient     String   // email or phone number
-  subject       String?
-  message       String
-  status        NotificationStatus @default(PENDING)
-  sentAt        DateTime?
-  deliveredAt   DateTime?
-  failedAt      DateTime?
-  errorMessage  String?
-  metadata      Json?    // order ID, reservation ID, etc.
+  id           String              @id @default(cuid())
+  type         NotificationType
+  channel      NotificationChannel
+  recipient    String // email or phone number
+  subject      String?
+  message      String
+  status       NotificationStatus  @default(PENDING)
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  failedAt     DateTime?
+  errorMessage String?
+  metadata     Json? // order ID, reservation ID, etc.
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum NotificationType {
@@ -814,35 +1028,35 @@ enum NotificationStatus {
 }
 
 model NotificationTemplate {
-  id            String   @id @default(cuid())
-  name          String   @unique
-  type          NotificationType
-  channel       NotificationChannel
-  subject       String?
-  content       String
-  isActive      Boolean  @default(true)
+  id       String              @id @default(cuid())
+  name     String              @unique
+  type     NotificationType
+  channel  NotificationChannel
+  subject  String?
+  content  String
+  isActive Boolean             @default(true)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============= RECIPES =============
 model Recipe {
-  id            String   @id @default(cuid())
-  menuItemId    String   @unique
-  prepTime      Int      // minutes
-  cookTime      Int      // minutes
-  servings      Int      @default(1)
+  id            String           @id @default(cuid())
+  menuItemId    String           @unique
+  prepTime      Int // minutes
+  cookTime      Int // minutes
+  servings      Int              @default(1)
   difficulty    RecipeDifficulty @default(MEDIUM)
-  instructions  Json     // Array of instruction steps with optional images
+  instructions  Json // Array of instruction steps with optional images
   notes         String?
   videoUrl      String?
   allergenNotes String?
 
-  menuItem      MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum RecipeDifficulty {
@@ -853,32 +1067,32 @@ enum RecipeDifficulty {
 
 // ============= MULTI-LOCATION =============
 model Location {
-  id            String   @id @default(cuid())
-  name          String
-  code          String   @unique // short code like "DT" for downtown
-  address       String
-  city          String
-  state         String
-  zipCode       String
-  phone         String?
-  email         String?
-  timezone      String   @default("America/New_York")
-  isActive      Boolean  @default(true)
-  isPrimary     Boolean  @default(false)
+  id        String  @id @default(cuid())
+  name      String
+  code      String  @unique // short code like "DT" for downtown
+  address   String
+  city      String
+  state     String
+  zipCode   String
+  phone     String?
+  email     String?
+  timezone  String  @default("America/New_York")
+  isActive  Boolean @default(true)
+  isPrimary Boolean @default(false)
 
-  operatingHours Json?   // { "monday": { "open": "09:00", "close": "22:00" }, ... }
+  operatingHours Json? // { "monday": { "open": "09:00", "close": "22:00" }, ... }
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============= SETTINGS =============
 model Settings {
-  id            String   @id @default(cuid())
-  key           String   @unique
-  value         Json
+  id    String @id @default(cuid())
+  key   String @unique
+  value Json
 
-  updatedAt     DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
 // ============= AI RESULTS (JSONB audit log) =============
@@ -886,19 +1100,19 @@ model Settings {
 // JSON (ai_results), the model used, and any error so we can replay or audit
 // any AI decision without re-charging tokens.
 model AiResult {
-  id            String   @id @default(cuid())
-  feature       String   // e.g. "menu_optimization", "dynamic_pricing", "no_show_predictor"
-  refType       String?  // optional FK target type, e.g. "Reservation" / "MenuItem"
-  refId         String?  // FK id on the target table (free-form so we don't enforce)
-  userId        String?  // who initiated the run
-  model         String   // model name reported back from OpenRouter
-  input         Json?    // sanitized prompt inputs / params
-  output        Json?    // parsed AI response (ai_results JSONB)
-  rawText       String?  // raw text in case parse failed
-  error         String?
-  durationMs    Int?
+  id         String  @id @default(cuid())
+  feature    String // e.g. "menu_optimization", "dynamic_pricing", "no_show_predictor"
+  refType    String? // optional FK target type, e.g. "Reservation" / "MenuItem"
+  refId      String? // FK id on the target table (free-form so we don't enforce)
+  userId     String? // who initiated the run
+  model      String // model name reported back from OpenRouter
+  input      Json? // sanitized prompt inputs / params
+  output     Json? // parsed AI response (ai_results JSONB)
+  rawText    String? // raw text in case parse failed
+  error      String?
+  durationMs Int?
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([feature, createdAt])
   @@index([refType, refId])
@@ -906,38 +1120,38 @@ model AiResult {
 
 // Tracks dynamic-pricing suggestions awaiting manager approval.
 model DynamicPriceSuggestion {
-  id            String   @id @default(cuid())
-  menuItemId    String
-  oldPrice      Float
+  id             String    @id @default(cuid())
+  menuItemId     String
+  oldPrice       Float
   suggestedPrice Float
-  reason        String   // why the AI suggested the change (inventory urgency / demand)
-  signals       Json     // raw signals (current_stock, days_until_empty, demand_index)
-  status        String   @default("pending") // pending | approved | rejected | applied
-  decidedById   String?
-  decidedAt     DateTime?
-  appliedAt     DateTime?
+  reason         String // why the AI suggested the change (inventory urgency / demand)
+  signals        Json // raw signals (current_stock, days_until_empty, demand_index)
+  status         String    @default("pending") // pending | approved | rejected | applied
+  decidedById    String?
+  decidedAt      DateTime?
+  appliedAt      DateTime?
 
-  menuItem      MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
 }
 
 // Per-customer no-show probability snapshot (refreshed nightly or on-demand).
 model NoShowRiskScore {
-  id              String   @id @default(cuid())
-  customerId      String?
-  customerName    String
-  customerPhone   String?
+  id                String   @id @default(cuid())
+  customerId        String?
+  customerName      String
+  customerPhone     String?
   totalReservations Int
-  noShowCount     Int
+  noShowCount       Int
   cancellationCount Int
-  riskScore       Float    // 0..1
-  riskBand        String   // low | medium | high
-  rationale       String
-  computedAt      DateTime @default(now())
+  riskScore         Float // 0..1
+  riskBand          String // low | medium | high
+  rationale         String
+  computedAt        DateTime @default(now())
 
   @@index([customerId])
   @@index([customerPhone])
@@ -946,32 +1160,32 @@ model NoShowRiskScore {
 
 // Tip-fairness analysis snapshot per pay period.
 model TipFairnessReport {
-  id            String   @id @default(cuid())
-  periodStart   DateTime
-  periodEnd     DateTime
-  giniIndex     Float    // 0 (equal) .. 1 (totally unequal)
-  flagged       Json     // [{ staffId, fairShare, actual, deltaPct, reason }]
-  summary       String
+  id          String   @id @default(cuid())
+  periodStart DateTime
+  periodEnd   DateTime
+  giniIndex   Float // 0 (equal) .. 1 (totally unequal)
+  flagged     Json // [{ staffId, fairShare, actual, deltaPct, reason }]
+  summary     String
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([periodEnd])
 }
 
 // Inbound SMS/WhatsApp messages going through the reservation concierge.
 model ConciergeMessage {
-  id            String   @id @default(cuid())
-  channel       String   // sms | whatsapp
-  direction     String   // inbound | outbound
+  id            String  @id @default(cuid())
+  channel       String // sms | whatsapp
+  direction     String // inbound | outbound
   fromNumber    String
   toNumber      String
   body          String
-  intent        String?  // reservation | order | info | unknown
-  parsed        Json?    // parsed entities {partySize, date, ...}
+  intent        String? // reservation | order | info | unknown
+  parsed        Json? // parsed entities {partySize, date, ...}
   reservationId String?
-  status        String   @default("received") // received | replied | escalated
+  status        String  @default("received") // received | replied | escalated
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([fromNumber, createdAt])
 }

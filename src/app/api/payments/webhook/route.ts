@@ -1,98 +1,51 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import type Stripe from "stripe";
 import prisma from "@/lib/prisma";
-import Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
+import { sha256 } from "@/lib/commerce/crypto";
+import { applyPaymentWebhook } from "@/lib/commerce/payments";
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "";
-
-/**
- * POST /api/payments/webhook
- * Stripe sends signed events here. We verify the signature then:
- *   - payment_intent.succeeded  → mark order PAID
- *   - payment_intent.payment_failed → log failure (order stays UNPAID)
- *
- * Next.js App Router requires the raw body, so we read it via request.arrayBuffer().
- * Add STRIPE_WEBHOOK_SECRET to your .env (from `stripe listen` or the dashboard).
- */
 export async function POST(request: NextRequest) {
   const stripe = getStripe();
-  if (!stripe || !webhookSecret) {
-    return NextResponse.json(
-      { error: "Payments are not configured. Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to enable the webhook." },
-      { status: 503 }
-    );
-  }
-
-  const rawBody = await request.arrayBuffer();
-  const buf = Buffer.from(rawBody);
-  const sig = request.headers.get("stripe-signature") ?? "";
-
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !webhookSecret) return NextResponse.json({ error: "Stripe webhook is not configured" }, { status: 503 });
+  const rawBody = Buffer.from(await request.arrayBuffer());
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
-  } catch (err) {
-    console.error("Webhook signature verification failed:", err);
+    event = stripe.webhooks.constructEvent(rawBody, request.headers.get("stripe-signature") ?? "", webhookSecret);
+  } catch {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
-
   try {
-    switch (event.type) {
-      case "payment_intent.succeeded": {
-        const intent = event.data.object as Stripe.PaymentIntent;
-        const orderId = intent.metadata?.orderId;
-
-        if (orderId) {
-          await prisma.order.update({
-            where: { id: orderId },
-            data: {
-              paymentStatus: "PAID",
-              paymentMethod: intent.payment_method_types?.[0] ?? "card",
-            },
-          });
-
-          // Also record a Payment row for the ledger
-          await prisma.payment.create({
-            data: {
-              orderId,
-              amount: intent.amount_received / 100,
-              method: intent.payment_method_types?.[0] ?? "card",
-              reference: intent.id,
-              status: "completed",
-            },
-          });
-
-          console.log(`Order ${orderId} marked as PAID via Stripe intent ${intent.id}`);
-        }
-        break;
-      }
-
-      case "payment_intent.payment_failed": {
-        const intent = event.data.object as Stripe.PaymentIntent;
-        const orderId = intent.metadata?.orderId;
-        if (orderId) {
-          console.warn(
-            `Payment failed for order ${orderId}: ${intent.last_payment_error?.message}`
-          );
-          // Leave order UNPAID; front-end can retry
-        }
-        break;
-      }
-
-      default:
-        // Ignore other event types
-        break;
+    await prisma.webhookEvent.create({ data: { provider: "stripe", eventId: event.id, eventType: event.type, payloadHash: sha256(rawBody) } });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ received: true, duplicate: true });
     }
-  } catch (err) {
-    console.error("Webhook handler error:", err);
+    throw error;
+  }
+  try {
+    if (event.type === "payment_intent.succeeded" || event.type === "payment_intent.payment_failed") {
+      const intent = event.data.object as Stripe.PaymentIntent;
+      if (!intent.metadata.orderId) throw new Error("Payment intent is missing orderId metadata");
+      await applyPaymentWebhook({
+        eventId: event.id,
+        eventType: event.type,
+        paymentReference: intent.id,
+        orderId: intent.metadata.orderId,
+        amountReceivedCents: intent.amount_received,
+        paymentMethod: intent.payment_method_types[0],
+        failureCode: intent.last_payment_error?.code,
+        failureMessage: intent.last_payment_error?.message,
+      });
+      await prisma.webhookEvent.update({ where: { provider_eventId: { provider: "stripe", eventId: event.id } }, data: { status: "PROCESSED", processedAt: new Date(), attempts: { increment: 1 } } });
+    } else {
+      await prisma.webhookEvent.update({ where: { provider_eventId: { provider: "stripe", eventId: event.id } }, data: { status: "IGNORED", processedAt: new Date(), attempts: { increment: 1 } } });
+    }
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    await prisma.webhookEvent.update({ where: { provider_eventId: { provider: "stripe", eventId: event.id } }, data: { status: "FAILED", attempts: { increment: 1 }, error: error instanceof Error ? error.message : "Unknown error" } });
     return NextResponse.json({ error: "Webhook processing failed" }, { status: 500 });
   }
-
-  return NextResponse.json({ received: true });
 }
-
-// Disable body parsing — Stripe needs the raw bytes for signature verification
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};

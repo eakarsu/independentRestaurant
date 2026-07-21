@@ -71,11 +71,12 @@ export default function DeliveriesPage() {
 
   const handleUpdateStatus = async (orderId: string, status: string) => {
     try {
-      await fetch(`/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+      const response = await fetch(`/api/orders/${orderId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ toStatus: status }),
       });
+      if (!response.ok) throw new Error("Order transition failed");
       toast({ title: "Success", description: "Status updated" });
       fetchOrders();
     } catch {
@@ -85,11 +86,12 @@ export default function DeliveriesPage() {
 
   const handleMarkDelivered = async (orderId: string) => {
     try {
-      await fetch(`/api/orders/${orderId}/delivery`, {
+      const response = await fetch(`/api/orders/${orderId}/delivery`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deliveredAt: new Date().toISOString() }),
       });
+      if (!response.ok) throw new Error("Delivery update failed");
       await handleUpdateStatus(orderId, "COMPLETED");
     } catch {
       toast({ title: "Error", description: "Failed to update", variant: "destructive" });

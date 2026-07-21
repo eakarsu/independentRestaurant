@@ -11,7 +11,6 @@ import {
   Users,
   UserCircle,
   BarChart3,
-  Bot,
   Plug,
   Settings,
   Home,
@@ -32,7 +31,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
   { name: "Reservations", href: "/reservations", icon: CalendarDays },
-  { name: "Table Turn Forecast", href: "/table-turn-forecast", icon: CalendarClock },
   { name: "Orders", href: "/orders", icon: ClipboardList },
   { name: "Kitchen Display", href: "/kitchen", icon: ChefHat },
   { name: "Deliveries", href: "/deliveries", icon: Truck },
@@ -50,7 +48,6 @@ const navigation = [
   { name: "Notifications", href: "/notifications", icon: Bell },
   { name: "Reports", href: "/reports", icon: BarChart3 },
   { name: "Locations", href: "/locations", icon: MapPin },
-  { name: "AI", href: "/ai", icon: Bot },
   { name: "Integrations", href: "/integrations", icon: Plug },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
@@ -63,7 +60,7 @@ export function Sidebar() {
       <div className="flex h-16 items-center border-b px-6">
         <Link href="/dashboard" className="flex items-center space-x-2">
           <UtensilsCrossed className="h-6 w-6 text-primary" />
-          <span className="text-xl font-bold">RestaurantAI</span>
+          <span className="text-xl font-bold">Restaurant Operations</span>
         </Link>
       </div>
       <ScrollArea className="flex-1 px-3 py-4">

@@ -1,127 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { emitOrderStatusChanged } from "@/lib/socket-server";
-import { sendOrderReadyEmail } from "@/lib/email";
+import { AuthorizationError, ORDER_READ_ROLES, requireActor } from "@/lib/commerce/authz";
+import { verifyOrderAuditChain } from "@/lib/commerce/orders";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
-    const order = await prisma.order.findUnique({
-      where: { id: params.id },
+    const actor = await requireActor(ORDER_READ_ROLES);
+    const order = await prisma.order.findFirst({
+      where: { id: params.id, ...(actor.role === "CUSTOMER" ? { customer: { userId: actor.userId } } : {}) },
       include: {
         table: true,
         customer: true,
         staff: true,
-        items: {
-          include: {
-            menuItem: true,
-            modifiers: {
-              include: {
-                modifier: true,
-              },
-            },
-          },
-        },
+        items: { include: { menuItem: true, modifiers: { include: { modifier: true } } } },
         payments: true,
+        paymentAttempts: true,
+        refunds: true,
         delivery: true,
+        events: { orderBy: { sequence: "asc" } },
+        inventoryReservations: { include: { lines: true } },
       },
     });
-    if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
-    }
-    return NextResponse.json(order);
+    if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    return NextResponse.json({ ...order, auditChainValid: await verifyOrderAuditChain(order.id) });
   } catch (error) {
-    console.error("Error fetching order:", error);
-    return NextResponse.json({ error: "Failed to fetch order" }, { status: 500 });
+    const status = error instanceof AuthorizationError ? error.status : 500;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to fetch order" }, { status });
   }
 }
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const body = await request.json();
-
-    // Fetch the current order so we can detect a status transition
-    const existing = await prisma.order.findUnique({
-      where: { id: params.id },
-      select: { status: true, orderNumber: true, type: true },
-    });
-
-    const order = await prisma.order.update({
-      where: { id: params.id },
-      data: {
-        status: body.status,
-        paymentStatus: body.paymentStatus,
-        paymentMethod: body.paymentMethod,
-        tip: body.tip,
-        discount: body.discount,
-        notes: body.notes,
-      },
-      include: {
-        table: true,
-        customer: true,
-        items: {
-          include: {
-            menuItem: true,
-          },
-        },
-      },
-    });
-
-    // Emit real-time event if status changed
-    if (existing && body.status && existing.status !== body.status) {
-      emitOrderStatusChanged({
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        status: order.status,
-        previousStatus: existing.status,
-        type: order.type,
-      });
-
-      // Send ready-for-pickup email when order reaches READY status
-      if (order.status === "READY" && order.customer?.email) {
-        sendOrderReadyEmail({
-          orderNumber: order.orderNumber,
-          customerName: `${order.customer.firstName} ${order.customer.lastName}`,
-          customerEmail: order.customer.email,
-          type: order.type,
-        });
-      }
-    }
-
-    return NextResponse.json(order);
-  } catch (error) {
-    console.error("Error updating order:", error);
-    return NextResponse.json({ error: "Failed to update order" }, { status: 500 });
-  }
+export async function PUT() {
+  return NextResponse.json({ error: "Direct order mutation is disabled; use /api/orders/:id/actions" }, { status: 405, headers: { Allow: "GET" } });
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    // Delete order items first
-    await prisma.orderItemModifier.deleteMany({
-      where: {
-        orderItem: {
-          orderId: params.id,
-        },
-      },
-    });
-    await prisma.orderItem.deleteMany({
-      where: { orderId: params.id },
-    });
-    await prisma.order.delete({
-      where: { id: params.id },
-    });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting order:", error);
-    return NextResponse.json({ error: "Failed to delete order" }, { status: 500 });
-  }
+export async function DELETE() {
+  return NextResponse.json({ error: "Orders and audit history are immutable" }, { status: 405, headers: { Allow: "GET" } });
 }

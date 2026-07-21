@@ -21,7 +21,7 @@ export const authOptions: NextAuthOptions = {
           include: { staffProfile: true },
         });
 
-        if (!user) {
+        if (!user || !user.isActive) {
           return null;
         }
 
@@ -39,24 +39,38 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name || user.staffProfile?.firstName || "User",
           role: user.role,
+          authVersion: user.authVersion,
         };
       },
     }),
   ],
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 8 * 60 * 60,
   },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
         token.id = user.id;
+        token.authVersion = user.authVersion;
+      } else if (token.id) {
+        const current = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { role: true, isActive: true, authVersion: true },
+        });
+        if (!current?.isActive || current.authVersion !== token.authVersion) token.invalid = true;
+        else token.role = current.role;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
+        if (token.invalid) {
+          session.user.id = "";
+          session.user.role = "DISABLED";
+          return session;
+        }
         session.user.role = token.role as string;
         session.user.id = token.id as string;
       }

@@ -1,27 +1,26 @@
+import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { sha256 } from "@/lib/commerce/crypto";
+import { sendPasswordResetEmail } from "@/lib/email";
+import { authLimiter } from "@/lib/rate-limit";
+import { getClientIp } from "@/lib/api-helpers";
+
+const schema = z.object({ email: z.string().email().transform((value) => value.toLowerCase()) });
 
 export async function POST(request: NextRequest) {
+  if (!authLimiter(getClientIp(request)).success) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  const generic = { message: "If the account exists, a reset message has been sent" };
   try {
-    const body = await request.json();
-    const { email } = body;
-
-    if (!email) {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 });
-    }
-
-    const user = await prisma.user.findUnique({ where: { email } });
-
-    if (!user) {
-      return NextResponse.json({ message: "If an account with that email exists, a password reset link has been sent" });
-    }
-
-    const resetToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    console.log(`Password reset token for ${email}: ${resetToken}`);
-
-    return NextResponse.json({ message: "If an account with that email exists, a password reset link has been sent" });
-  } catch (error) {
-    console.error("Error processing password reset:", error);
-    return NextResponse.json({ error: "Failed to process password reset request" }, { status: 500 });
+    const input = schema.parse(await request.json());
+    const user = await prisma.user.findUnique({ where: { email: input.email } });
+    if (!user?.isActive) return NextResponse.json(generic);
+    const token = randomBytes(32).toString("base64url");
+    await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: sha256(token), expiresAt: new Date(Date.now() + 30 * 60_000) } });
+    await sendPasswordResetEmail(user.email, token);
+    return NextResponse.json(generic);
+  } catch {
+    return NextResponse.json(generic);
   }
 }

@@ -54,11 +54,12 @@ export default function KitchenDisplayPage() {
 
   const handleStartPrep = async (orderId: string) => {
     try {
-      await fetch(`/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "PREPARING" }),
+      const response = await fetch(`/api/orders/${orderId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ toStatus: "PREPARING" }),
       });
+      if (!response.ok) throw new Error("Order transition failed");
       toast({ title: "Order Started", description: "Marked as preparing" });
       fetchOrders();
     } catch (error) {
@@ -68,11 +69,12 @@ export default function KitchenDisplayPage() {
 
   const handleMarkReady = async (orderId: string) => {
     try {
-      await fetch(`/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "READY" }),
+      const response = await fetch(`/api/orders/${orderId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ toStatus: "READY" }),
       });
+      if (!response.ok) throw new Error("Order transition failed");
       toast({ title: "Order Ready", description: "Marked as ready for service" });
       fetchOrders();
     } catch (error) {

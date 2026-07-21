@@ -1,82 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth";
-import prisma from "@/lib/prisma";
-import { getStripe } from "@/lib/stripe";
+import { AuthorizationError, ORDER_WRITE_ROLES, requireActor } from "@/lib/commerce/authz";
+import { beginPayment } from "@/lib/commerce/payments";
 
-/**
- * POST /api/orders/:id/pay
- * Creates a Stripe PaymentIntent for the order total.
- * Returns { clientSecret } for the frontend to confirm with Stripe.js
- */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const stripe = getStripe();
-  if (!stripe) {
-    return NextResponse.json(
-      { error: "Payments are not configured. Set STRIPE_SECRET_KEY to enable card payments." },
-      { status: 503 }
-    );
-  }
-
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
-    const order = await prisma.order.findUnique({
-      where: { id: params.id },
-      include: { customer: true },
-    });
-
-    if (!order) {
-      return NextResponse.json({ error: "Order not found" }, { status: 404 });
-    }
-
-    if (order.paymentStatus === "PAID") {
-      return NextResponse.json({ error: "Order already paid" }, { status: 400 });
-    }
-
-    // Stripe amounts are in the smallest currency unit (cents for USD)
-    const amountCents = Math.round(order.total * 100);
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: "usd",
-      metadata: {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        restaurantName: "Independent Restaurant",
-      },
-      description: `Order #${order.orderNumber}`,
-      receipt_email: order.customer?.email ?? undefined,
-    });
-
-    // Store the paymentIntentId on the order so the webhook can match it
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        // We store the intent ID in the paymentMethod field temporarily
-        // until the webhook confirms payment. A production system would
-        // use a separate PaymentIntent model.
-        paymentMethod: `pi:${paymentIntent.id}`,
-      },
-    });
-
-    return NextResponse.json({
-      clientSecret: paymentIntent.client_secret,
-      paymentIntentId: paymentIntent.id,
-      amount: order.total,
-      currency: "usd",
-    });
+    const actor = await requireActor(ORDER_WRITE_ROLES);
+    const idempotencyKey = request.headers.get("idempotency-key");
+    if (!idempotencyKey) return NextResponse.json({ error: "Idempotency-Key header is required" }, { status: 400 });
+    return NextResponse.json(await beginPayment({ orderId: params.id, idempotencyKey, actor }));
   } catch (error) {
-    console.error("Stripe PaymentIntent error:", error);
-    return NextResponse.json(
-      { error: "Failed to create payment intent" },
-      { status: 500 }
-    );
+    const status = error instanceof AuthorizationError ? error.status : (error as { status?: number }).status ?? 502;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Payment failed" }, { status });
   }
 }

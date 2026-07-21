@@ -3,6 +3,7 @@
 import { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,16 +102,14 @@ function LoginForm() {
               "Sign In"
             )}
           </Button>
+          <Link className="block text-center text-sm text-primary underline-offset-4 hover:underline" href="/reset-password">
+            Reset password
+          </Link>
         </form>
 
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          <p className="font-medium mb-2">Demo Accounts:</p>
-          <div className="space-y-1 text-xs">
-            <p>Admin: admin@restaurant.com / admin123</p>
-            <p>Manager: manager@restaurant.com / manager123</p>
-            <p>Staff: staff@restaurant.com / staff123</p>
-          </div>
-        </div>
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          Accounts are provisioned by a merchant administrator.
+        </p>
       </CardContent>
     </Card>
   );

@@ -453,7 +453,7 @@ export default function ReservationsPage() {
                     mode="single"
                     selected={selectedDate}
                     onSelect={(date) => date && setSelectedDate(date)}
-                    initialFocus
+                    autoFocus
                   />
                 </PopoverContent>
               </Popover>
@@ -542,7 +542,7 @@ export default function ReservationsPage() {
                               mode="single"
                               selected={formData.date}
                               onSelect={(date) => date && setFormData({ ...formData, date })}
-                              initialFocus
+                              autoFocus
                             />
                           </PopoverContent>
                         </Popover>

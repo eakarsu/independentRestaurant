@@ -1,161 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { generateOrderNumber } from "@/lib/utils";
-import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
-import { emitOrderCreated } from "@/lib/socket-server";
-import { sendOrderConfirmationEmail } from "@/lib/email";
+import { AuthorizationError, ORDER_READ_ROLES, ORDER_WRITE_ROLES, requireActor } from "@/lib/commerce/authz";
+import { createRestaurantOrder } from "@/lib/commerce/orders";
+import { getPaginationParams, paginatedResponse } from "@/lib/api-helpers";
+
+function errorResponse(error: unknown) {
+  let status = 500;
+  if (error instanceof AuthorizationError) status = error.status;
+  else if (typeof (error as { status?: unknown }).status === "number") status = (error as { status: number }).status;
+  else if ((error as { name?: string }).name === "ZodError") status = 400;
+  return NextResponse.json({ error: error instanceof Error ? error.message : "Order request failed" }, { status });
+}
 
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const status = searchParams.get("status");
-    const type = searchParams.get("type");
-    const date = searchParams.get("date");
+    const actor = await requireActor(ORDER_READ_ROLES);
     const pagination = getPaginationParams(request);
-    const sort = getSortParams(request, "createdAt");
-
-    const where: Record<string, unknown> = {};
-
-    if (status) {
-      where.status = status;
-    }
-
-    if (type) {
-      where.type = type;
-    }
-
-    if (date) {
-      const startOfDay = new Date(date);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(date);
-      endOfDay.setHours(23, 59, 59, 999);
-      where.createdAt = {
-        gte: startOfDay,
-        lt: endOfDay,
-      };
-    }
-
+    const status = request.nextUrl.searchParams.get("status") ?? undefined;
+    const where = {
+      ...(status ? { status: status as never } : {}),
+      ...(actor.role === "CUSTOMER" ? { customer: { userId: actor.userId } } : {}),
+    };
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
         where,
-        orderBy: { [sort.sortBy]: sort.sortDirection },
+        orderBy: { createdAt: "desc" },
         skip: pagination.skip,
         take: pagination.take,
-        include: {
-          table: true,
-          customer: true,
-          staff: true,
-          items: {
-            include: {
-              menuItem: true,
-              modifiers: {
-                include: {
-                  modifier: true,
-                },
-              },
-            },
-          },
-        },
+        include: { customer: true, table: true, items: { include: { menuItem: true } }, delivery: true },
       }),
       prisma.order.count({ where }),
     ]);
-
     return NextResponse.json(paginatedResponse(orders, total, pagination));
   } catch (error) {
-    return handleApiError(error, "Orders");
+    return errorResponse(error);
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-
-    let subtotal = 0;
-    const itemsData = body.items.map((item: { menuItemId: string; quantity: number; unitPrice: number; notes?: string; modifiers?: { modifierId: string; priceAdjustment: number }[] }) => {
-      const itemTotal = item.unitPrice * item.quantity;
-      const modifiersTotal = (item.modifiers || []).reduce((sum: number, m: { priceAdjustment: number }) => sum + m.priceAdjustment, 0) * item.quantity;
-      subtotal += itemTotal + modifiersTotal;
-      return {
-        menuItemId: item.menuItemId,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: itemTotal + modifiersTotal,
-        notes: item.notes,
-        modifiers: {
-          create: (item.modifiers || []).map((m: { modifierId: string; priceAdjustment: number }) => ({
-            modifierId: m.modifierId,
-            priceAdjustment: m.priceAdjustment,
-          })),
-        },
-      };
-    });
-
-    const tax = subtotal * 0.0875;
-    const total = subtotal + tax - (body.discount || 0) + (body.tip || 0);
-
-    const order = await prisma.order.create({
-      data: {
-        orderNumber: generateOrderNumber(),
-        tableId: body.tableId,
-        customerId: body.customerId,
-        staffId: body.staffId,
-        type: body.type || "DINE_IN",
-        status: "PENDING",
-        subtotal,
-        tax,
-        discount: body.discount || 0,
-        tip: body.tip || 0,
-        total,
-        notes: body.notes,
-        source: body.source || "pos",
-        items: {
-          create: itemsData,
-        },
-      },
-      include: {
-        table: true,
-        customer: true,
-        items: {
-          include: {
-            menuItem: true,
-            modifiers: {
-              include: {
-                modifier: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    // Emit real-time event so kitchen and front-of-house dashboards update instantly
-    emitOrderCreated({
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      type: order.type,
-      total: order.total,
-    });
-
-    // Send confirmation email if we have a customer email address
-    if (order.customer?.email) {
-      sendOrderConfirmationEmail({
-        orderNumber: order.orderNumber,
-        customerName: `${order.customer.firstName} ${order.customer.lastName}`,
-        customerEmail: order.customer.email,
-        total: order.total,
-        items: order.items.map((item) => ({
-          name: item.menuItem.name,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-        })),
-        type: order.type,
-        notes: order.notes ?? undefined,
-      });
-    }
-
+    const actor = await requireActor(ORDER_WRITE_ROLES);
+    const idempotencyKey = request.headers.get("idempotency-key");
+    if (!idempotencyKey) return NextResponse.json({ error: "Idempotency-Key header is required" }, { status: 400 });
+    const order = await createRestaurantOrder({ ...(await request.json()), idempotencyKey }, actor);
     return NextResponse.json(order, { status: 201 });
   } catch (error) {
-    console.error("Error creating order:", error);
-    return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
+    return errorResponse(error);
   }
 }

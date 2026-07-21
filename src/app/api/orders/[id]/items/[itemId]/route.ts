@@ -1,66 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { z } from "zod";
+import { AuthorizationError, ORDER_CONTROL_ROLES, requireActor } from "@/lib/commerce/authz";
+import { transitionOrderItem } from "@/lib/commerce/orders";
+
+const schema = z.object({
+  toStatus: z.enum(["PENDING", "SENT", "PREPARING", "READY", "SERVED", "CANCELLED"]),
+  reason: z.string().trim().max(500).optional(),
+});
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string; itemId: string } }
+  props: { params: Promise<{ id: string; itemId: string }> }
 ) {
+  const params = await props.params;
   try {
-    const body = await request.json();
-    const orderItem = await prisma.orderItem.update({
-      where: { id: params.itemId },
-      data: {
-        quantity: body.quantity,
-        status: body.status,
-        notes: body.notes,
-        sentToKitchen: body.sentToKitchen ? new Date() : undefined,
-        preparedAt: body.preparedAt ? new Date() : undefined,
-      },
-      include: {
-        menuItem: true,
-      },
-    });
-    return NextResponse.json(orderItem);
+    const actor = await requireActor(ORDER_CONTROL_ROLES);
+    const idempotencyKey = request.headers.get("idempotency-key");
+    if (!idempotencyKey) return NextResponse.json({ error: "Idempotency-Key header is required" }, { status: 400 });
+    const body = schema.parse(await request.json());
+    return NextResponse.json(await transitionOrderItem({ orderId: params.id, itemId: params.itemId, idempotencyKey, actor, ...body }));
   } catch (error) {
-    console.error("Error updating order item:", error);
-    return NextResponse.json({ error: "Failed to update order item" }, { status: 500 });
+    const status = error instanceof AuthorizationError ? error.status : (error as { status?: number }).status ?? 409;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Item transition failed" }, { status });
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string; itemId: string } }
-) {
-  try {
-    // Delete modifiers first
-    await prisma.orderItemModifier.deleteMany({
-      where: { orderItemId: params.itemId },
-    });
-
-    const deletedItem = await prisma.orderItem.delete({
-      where: { id: params.itemId },
-    });
-
-    // Update order totals
-    const order = await prisma.order.findUnique({
-      where: { id: params.id },
-      include: { items: true },
-    });
-
-    if (order) {
-      const subtotal = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
-      const tax = subtotal * 0.0875;
-      const total = subtotal + tax - order.discount + order.tip;
-
-      await prisma.order.update({
-        where: { id: params.id },
-        data: { subtotal, tax, total },
-      });
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting order item:", error);
-    return NextResponse.json({ error: "Failed to delete order item" }, { status: 500 });
-  }
+export async function DELETE() {
+  return NextResponse.json({ error: "Order items and their audit history are immutable" }, { status: 405 });
 }

@@ -7,8 +7,8 @@ import { AuthProvider } from "@/components/providers/session-provider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "RestaurantAI - Complete Restaurant Management Platform",
-  description: "AI-powered restaurant management system for reservations, orders, menu, inventory, staff, and more.",
+  title: "Restaurant Operations",
+  description: "Auditable restaurant order, kitchen, inventory, and fulfillment operations.",
 };
 
 export default function RootLayout({

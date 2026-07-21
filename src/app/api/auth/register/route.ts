@@ -1,35 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { AuthorizationError, requireActor } from "@/lib/commerce/authz";
+
+const schema = z.object({
+  email: z.string().email().transform((value) => value.toLowerCase()),
+  name: z.string().trim().min(1).max(120),
+  password: z.string().min(14).max(200),
+  role: z.enum(["MERCHANT", "MANAGER", "OPERATOR", "STAFF", "HOST", "CHEF", "CUSTOMER"]),
+});
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { email, name, password, role } = body;
-
-    if (!email || !name || !password) {
-      return NextResponse.json({ error: "Email, name, and password are required" }, { status: 400 });
-    }
-
-    if (password.length < 6) {
-      return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
-    }
-
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return NextResponse.json({ error: "A user with this email already exists" }, { status: 409 });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
+    await requireActor(["ADMIN", "MERCHANT"]);
+    const input = schema.parse(await request.json());
     const user = await prisma.user.create({
-      data: { email, name, password: hashedPassword, role: role || "STAFF" },
-      select: { id: true, email: true, name: true, role: true, createdAt: true, updatedAt: true },
+      data: { ...input, password: await bcrypt.hash(input.password, 12) },
+      select: { id: true, email: true, name: true, role: true, isActive: true, createdAt: true },
     });
-
     return NextResponse.json(user, { status: 201 });
   } catch (error) {
-    console.error("Error registering user:", error);
-    return NextResponse.json({ error: "Failed to register user" }, { status: 500 });
+    const status = error instanceof AuthorizationError ? error.status : (error as { name?: string }).name === "ZodError" ? 400 : 409;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Account provisioning failed" }, { status });
   }
 }

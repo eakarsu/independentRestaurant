@@ -28,9 +28,9 @@ import { ConfirmationDialog, useConfirmation } from "@/components/ui/confirmatio
 import { ErrorBoundary } from "@/components/error-boundary";
 import { exportToPDF } from "@/lib/pdf-export";
 import {
-  Plus, Minus, ShoppingCart, Clock, DollarSign, ChefHat,
+  Plus, Minus, ShoppingCart, Clock, ChefHat,
   CheckCircle, XCircle, Printer, CreditCard, Trash2,
-  Split, Users, FileDown, CheckSquare,
+  FileDown,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -88,26 +88,6 @@ interface CartItem {
   notes: string;
 }
 
-interface SplitCheck {
-  id: string;
-  guestNumber: number;
-  guestName: string | null;
-  subtotal: number;
-  tax: number;
-  tip: number;
-  total: number;
-  isPaid: boolean;
-  paymentMethod: string | null;
-  items: {
-    id: string;
-    quantity: number;
-    amount: number;
-    orderItem: {
-      menuItem: { name: string };
-    };
-  }[];
-}
-
 function OrdersPageContent() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -121,10 +101,6 @@ function OrdersPageContent() {
   const [activeTab, setActiveTab] = useState("active");
   const [isDetailSheetOpen, setIsDetailSheetOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
-  const [isSplitDialogOpen, setIsSplitDialogOpen] = useState(false);
-  const [splitChecks, setSplitChecks] = useState<SplitCheck[]>([]);
-  const [numberOfGuests, setNumberOfGuests] = useState(2);
-  const [splitLoading, setSplitLoading] = useState(false);
 
   // Pagination state (for completed orders)
   const [currentPage, setCurrentPage] = useState(1);
@@ -138,7 +114,7 @@ function OrdersPageContent() {
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkMode, setBulkMode] = useState(false);
+  const bulkMode = false;
 
   // Confirmation dialog
   const { state: confirmState, confirm, close: closeConfirm } = useConfirmation();
@@ -146,66 +122,6 @@ function OrdersPageContent() {
   const openOrderDetail = (order: Order) => {
     setDetailOrder(order);
     setIsDetailSheetOpen(true);
-  };
-
-  const openSplitDialog = async (order: Order) => {
-    setDetailOrder(order);
-    setIsSplitDialogOpen(true);
-    try {
-      const res = await fetch(`/api/orders/${order.id}/split`);
-      const data = await res.json();
-      setSplitChecks(Array.isArray(data) ? data : []);
-    } catch {
-      setSplitChecks([]);
-    }
-  };
-
-  const handleSplitEvenly = async () => {
-    if (!detailOrder) return;
-    setSplitLoading(true);
-    try {
-      const res = await fetch(`/api/orders/${detailOrder.id}/split`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ splitType: "even", numberOfGuests }),
-      });
-      const data = await res.json();
-      setSplitChecks(Array.isArray(data) ? data : []);
-      toast({ title: "Success", description: `Check split into ${numberOfGuests} parts` });
-    } catch {
-      toast({ title: "Error", description: "Failed to split check", variant: "destructive" });
-    } finally {
-      setSplitLoading(false);
-    }
-  };
-
-  const handlePaySplitCheck = async (splitCheckId: string, paymentMethod: string) => {
-    if (!detailOrder) return;
-    try {
-      await fetch(`/api/orders/${detailOrder.id}/split`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ splitCheckId, paymentMethod, tip: 0 }),
-      });
-      const res = await fetch(`/api/orders/${detailOrder.id}/split`);
-      const data = await res.json();
-      setSplitChecks(Array.isArray(data) ? data : []);
-      toast({ title: "Success", description: "Payment processed" });
-      fetchData();
-    } catch {
-      toast({ title: "Error", description: "Failed to process payment", variant: "destructive" });
-    }
-  };
-
-  const handleClearSplit = async () => {
-    if (!detailOrder) return;
-    try {
-      await fetch(`/api/orders/${detailOrder.id}/split`, { method: "DELETE" });
-      setSplitChecks([]);
-      toast({ title: "Success", description: "Split cleared" });
-    } catch {
-      toast({ title: "Error", description: "Failed to clear split", variant: "destructive" });
-    }
   };
 
   const fetchData = useCallback(async () => {
@@ -281,35 +197,6 @@ function OrdersPageContent() {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelectedIds(next);
-  };
-
-  // Bulk delete
-  const handleBulkDelete = () => {
-    confirm({
-      title: "Bulk Delete Orders",
-      description: `Are you sure you want to delete ${selectedIds.size} orders? This action cannot be undone.`,
-      variant: "danger",
-      confirmLabel: `Delete ${selectedIds.size} orders`,
-      onConfirm: async () => {
-        try {
-          const res = await fetch("/api/bulk", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "order", ids: Array.from(selectedIds) }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            toast({ title: "Success", description: `${data.deleted} orders deleted` });
-            setSelectedIds(new Set());
-            setBulkMode(false);
-            fetchData();
-          }
-        } catch {
-          toast({ title: "Error", description: "Failed to bulk delete", variant: "destructive" });
-        }
-        closeConfirm();
-      },
-    });
   };
 
   // PDF Export
@@ -401,15 +288,15 @@ function OrdersPageContent() {
     try {
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({
           type: orderType,
           tableId: orderType === "DINE_IN" ? selectedTable : null,
           items: cart.map((item) => ({
             menuItemId: item.menuItem.id,
             quantity: item.quantity,
-            unitPrice: item.menuItem.price,
             notes: item.notes,
+            modifierIds: [],
           })),
         }),
       });
@@ -436,10 +323,10 @@ function OrdersPageContent() {
         confirmLabel: "Cancel Order",
         onConfirm: async () => {
           try {
-            const response = await fetch(`/api/orders/${orderId}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status }),
+            const response = await fetch(`/api/orders/${orderId}/actions`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+              body: JSON.stringify({ toStatus: status, reason: "Cancelled by restaurant operator" }),
             });
             if (response.ok) {
               toast({ title: "Success", description: "Order cancelled" });
@@ -455,10 +342,10 @@ function OrdersPageContent() {
     }
 
     try {
-      const response = await fetch(`/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+      const response = await fetch(`/api/orders/${orderId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ toStatus: status }),
       });
       if (response.ok) {
         toast({ title: "Success", description: `Order status updated to ${status.toLowerCase()}` });
@@ -469,16 +356,19 @@ function OrdersPageContent() {
     }
   };
 
-  const handlePayOrder = async (orderId: string, paymentMethod: string) => {
+  const handlePayOrder = async (orderId: string) => {
     try {
-      const response = await fetch(`/api/orders/${orderId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentStatus: "PAID", paymentMethod }),
+      const response = await fetch(`/api/orders/${orderId}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
       });
       if (response.ok) {
-        toast({ title: "Success", description: "Payment processed successfully" });
-        fetchData();
+        const payment = await response.json();
+        if (payment.redirectUrl) window.location.assign(payment.redirectUrl);
+        else {
+          toast({ title: "Payment started", description: "Complete the authorization in the connected payment client." });
+          fetchData();
+        }
       }
     } catch {
       toast({ title: "Error", description: "Failed to process payment", variant: "destructive" });
@@ -489,10 +379,16 @@ function OrdersPageContent() {
     const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning"; label: string }> = {
       PENDING: { variant: "secondary", label: "Pending" },
       CONFIRMED: { variant: "default", label: "Confirmed" },
+      PAYMENT_PENDING: { variant: "warning", label: "Payment pending" },
+      PAYMENT_FAILED: { variant: "destructive", label: "Payment failed" },
       PREPARING: { variant: "warning", label: "Preparing" },
       READY: { variant: "success", label: "Ready" },
       SERVED: { variant: "outline", label: "Served" },
       COMPLETED: { variant: "default", label: "Completed" },
+      FULFILLMENT_FAILED: { variant: "destructive", label: "Fulfillment failed" },
+      EXCEPTION: { variant: "destructive", label: "Exception" },
+      REFUND_PENDING: { variant: "warning", label: "Refund pending" },
+      REFUNDED: { variant: "outline", label: "Refunded" },
       CANCELLED: { variant: "destructive", label: "Cancelled" },
     };
     const config = statusConfig[status] || { variant: "secondary" as const, label: status };
@@ -502,8 +398,11 @@ function OrdersPageContent() {
   const getPaymentBadge = (status: string) => {
     const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning"; label: string }> = {
       UNPAID: { variant: "destructive", label: "Unpaid" },
+      AUTHORIZING: { variant: "warning", label: "Authorizing" },
+      FAILED: { variant: "destructive", label: "Failed" },
       PARTIAL: { variant: "warning", label: "Partial" },
       PAID: { variant: "success", label: "Paid" },
+      PARTIALLY_REFUNDED: { variant: "warning", label: "Partially refunded" },
       REFUNDED: { variant: "outline", label: "Refunded" },
     };
     const config = statusConfig[status] || { variant: "secondary" as const, label: status };
@@ -527,9 +426,6 @@ function OrdersPageContent() {
             <p className="text-muted-foreground">{totalItems} total orders</p>
           </div>
           <div className="flex gap-2 items-center">
-            <Button variant="outline" size="sm" onClick={() => { setBulkMode(!bulkMode); setSelectedIds(new Set()); }}>
-              <CheckSquare className="mr-2 h-4 w-4" /> {bulkMode ? "Cancel" : "Select"}
-            </Button>
             <Button variant="outline" size="sm" onClick={handleExportPDF}>
               <FileDown className="mr-2 h-4 w-4" /> PDF
             </Button>
@@ -663,20 +559,6 @@ function OrdersPageContent() {
           </div>
         </div>
 
-        {/* Bulk Action Bar */}
-        {bulkMode && selectedIds.size > 0 && (
-          <Card className="border-primary">
-            <CardContent className="p-3 flex items-center justify-between">
-              <span className="text-sm font-medium">{selectedIds.size} orders selected</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
-                  <Trash2 className="mr-1 h-3 w-3" /> Delete Selected
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="active">Active Orders ({activeOrders.length})</TabsTrigger>
@@ -735,22 +617,14 @@ function OrdersPageContent() {
                         {order.status === "READY" && (
                           <Button size="sm" onClick={() => handleUpdateOrderStatus(order.id, "SERVED")}>Serve</Button>
                         )}
-                        {order.status === "SERVED" && order.paymentStatus === "UNPAID" && (
-                          <>
-                            <Button size="sm" onClick={() => handlePayOrder(order.id, "card")}>
+                        {["CONFIRMED", "READY", "SERVED"].includes(order.status) && ["UNPAID", "FAILED"].includes(order.paymentStatus) && (
+                            <Button size="sm" onClick={() => handlePayOrder(order.id)}>
                               <CreditCard className="mr-1 h-3 w-3" /> Pay Card
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => handlePayOrder(order.id, "cash")}>
-                              <DollarSign className="mr-1 h-3 w-3" /> Pay Cash
-                            </Button>
-                          </>
                         )}
                         {order.paymentStatus === "PAID" && order.status !== "COMPLETED" && (
                           <Button size="sm" onClick={() => handleUpdateOrderStatus(order.id, "COMPLETED")}>Complete</Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={() => openSplitDialog(order)}>
-                          <Split className="h-3 w-3" />
-                        </Button>
                         {order.status === "PENDING" && (
                           <Button size="sm" variant="ghost" onClick={() => handleUpdateOrderStatus(order.id, "CANCELLED")}>
                             <XCircle className="h-3 w-3 text-destructive" />
@@ -933,119 +807,16 @@ function OrdersPageContent() {
                       Serve
                     </Button>
                   )}
-                  {detailOrder.status === "SERVED" && detailOrder.paymentStatus === "UNPAID" && (
-                    <>
-                      <Button size="sm" onClick={() => { handlePayOrder(detailOrder.id, "card"); setIsDetailSheetOpen(false); }}>
+                  {["CONFIRMED", "READY", "SERVED"].includes(detailOrder.status) && ["UNPAID", "FAILED"].includes(detailOrder.paymentStatus) && (
+                      <Button size="sm" onClick={() => { handlePayOrder(detailOrder.id); setIsDetailSheetOpen(false); }}>
                         <CreditCard className="mr-1 h-3 w-3" /> Pay Card
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => { handlePayOrder(detailOrder.id, "cash"); setIsDetailSheetOpen(false); }}>
-                        <DollarSign className="mr-1 h-3 w-3" /> Pay Cash
-                      </Button>
-                    </>
                   )}
                   {detailOrder.status === "PENDING" && (
                     <Button size="sm" variant="destructive" onClick={() => { handleUpdateOrderStatus(detailOrder.id, "CANCELLED"); setIsDetailSheetOpen(false); }}>
                       <XCircle className="mr-1 h-3 w-3" /> Cancel
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" onClick={() => { setIsDetailSheetOpen(false); openSplitDialog(detailOrder); }}>
-                    <Split className="mr-1 h-3 w-3" /> Split Check
-                  </Button>
-                </DialogFooter>
-              </>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Split Check Dialog */}
-        <Dialog open={isSplitDialogOpen} onOpenChange={setIsSplitDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-            {detailOrder && (
-              <>
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Split className="h-5 w-5" />
-                    Split Check - {detailOrder.orderNumber}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Total: {formatCurrency(detailOrder.total)} | {detailOrder.items.length} items
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="space-y-4">
-                  {splitChecks.length === 0 && (
-                    <div className="p-4 bg-muted/50 rounded-lg">
-                      <div className="flex items-center gap-4 mb-4">
-                        <Label>Number of Guests</Label>
-                        <div className="flex items-center gap-2">
-                          <Button variant="outline" size="icon" onClick={() => setNumberOfGuests(Math.max(2, numberOfGuests - 1))}>
-                            <Minus className="h-4 w-4" />
-                          </Button>
-                          <span className="w-8 text-center font-bold">{numberOfGuests}</span>
-                          <Button variant="outline" size="icon" onClick={() => setNumberOfGuests(Math.min(10, numberOfGuests + 1))}>
-                            <Plus className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <Button onClick={handleSplitEvenly} disabled={splitLoading} className="w-full">
-                        <Users className="mr-2 h-4 w-4" />
-                        {splitLoading ? "Splitting..." : "Split Evenly"}
-                      </Button>
-                    </div>
-                  )}
-
-                  {splitChecks.length > 0 && (
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <h4 className="font-medium">Split Checks ({splitChecks.length} guests)</h4>
-                        <Button variant="outline" size="sm" onClick={handleClearSplit}>Clear Split</Button>
-                      </div>
-
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {splitChecks.map((check) => (
-                          <Card key={check.id} className={check.isPaid ? "border-green-500 bg-green-50" : ""}>
-                            <CardHeader className="pb-2">
-                              <div className="flex items-center justify-between">
-                                <CardTitle className="text-base">{check.guestName || `Guest ${check.guestNumber}`}</CardTitle>
-                                {check.isPaid ? <Badge variant="success">Paid</Badge> : <Badge variant="secondary">Unpaid</Badge>}
-                              </div>
-                            </CardHeader>
-                            <CardContent className="space-y-2">
-                              {check.items.map((item) => (
-                                <div key={item.id} className="flex justify-between text-sm">
-                                  <span>{item.quantity}x {item.orderItem.menuItem.name}</span>
-                                  <span>{formatCurrency(item.amount)}</span>
-                                </div>
-                              ))}
-                              <Separator />
-                              <div className="space-y-1 text-sm">
-                                <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(check.subtotal)}</span></div>
-                                <div className="flex justify-between"><span>Tax</span><span>{formatCurrency(check.tax)}</span></div>
-                                <div className="flex justify-between font-bold"><span>Total</span><span>{formatCurrency(check.total)}</span></div>
-                              </div>
-                              {!check.isPaid && (
-                                <div className="flex gap-2 mt-2">
-                                  <Button size="sm" className="flex-1" onClick={() => handlePaySplitCheck(check.id, "card")}>
-                                    <CreditCard className="mr-1 h-3 w-3" /> Card
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="flex-1" onClick={() => handlePaySplitCheck(check.id, "cash")}>
-                                    <DollarSign className="mr-1 h-3 w-3" /> Cash
-                                  </Button>
-                                </div>
-                              )}
-                              {check.isPaid && check.paymentMethod && (
-                                <p className="text-xs text-muted-foreground text-center">Paid via {check.paymentMethod}</p>
-                              )}
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsSplitDialogOpen(false)}>Close</Button>
                 </DialogFooter>
               </>
             )}

@@ -1,120 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { AuthorizationError, REFUND_ROLES, requireActor } from "@/lib/commerce/authz";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+const schema = z.object({ isActive: z.boolean() });
+
+export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
-    const integration = await prisma.integration.findUnique({
-      where: { id: params.id },
-    });
-
-    if (!integration) {
-      return NextResponse.json(
-        { error: "Integration not found" },
-        { status: 404 }
-      );
-    }
-
-    const logs = await prisma.integrationLog.findMany({
-      where: { integrationId: params.id },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-    });
-
-    return NextResponse.json({ ...integration, logs });
-  } catch (error) {
-    console.error("Error fetching integration:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch integration" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const body = await request.json();
-    const { isActive, config } = body;
-
-    const existing = await prisma.integration.findUnique({
-      where: { id: params.id },
-    });
-
-    if (!existing) {
-      return NextResponse.json(
-        { error: "Integration not found" },
-        { status: 404 }
-      );
-    }
-
-    const data: {
-      isActive?: boolean;
-      config?: object;
-      lastSync?: Date | null;
-    } = {};
-
-    if (typeof isActive === "boolean") {
-      data.isActive = isActive;
-      // Connecting performs an initial sync; disconnecting clears it.
-      data.lastSync = isActive ? new Date() : null;
-    }
-
-    if (config !== undefined) {
-      // Merge so partial config updates don't drop the stored description, etc.
-      data.config = {
-        ...(typeof existing.config === "object" && existing.config !== null
-          ? existing.config
-          : {}),
-        ...config,
-      };
-    }
-
-    const integration = await prisma.integration.update({
-      where: { id: params.id },
-      data,
-    });
-
-    // Record an audit log entry for connect/disconnect actions.
-    if (typeof isActive === "boolean") {
-      await prisma.integrationLog.create({
-        data: {
-          integrationId: integration.id,
-          action: isActive ? "connect" : "disconnect",
-          status: "success",
-          message: `${integration.name} ${isActive ? "connected" : "disconnected"}`,
-        },
+    const actor = await requireActor(REFUND_ROLES);
+    const body = schema.parse(await request.json());
+    const integration = await prisma.$transaction(async (tx) => {
+      const updated = await tx.integration.update({ where: { id: params.id }, data: { isActive: body.isActive } });
+      await tx.integrationLog.create({
+        data: { integrationId: updated.id, action: body.isActive ? "enable" : "disable", status: "success", message: `${actor.userId} ${body.isActive ? "enabled" : "disabled"} ${updated.name}` },
       });
-    }
-
-    return NextResponse.json(integration);
+      return updated;
+    });
+    return NextResponse.json({ ...integration, config: undefined });
   } catch (error) {
-    console.error("Error updating integration:", error);
-    return NextResponse.json(
-      { error: "Failed to update integration" },
-      { status: 500 }
-    );
+    const status = error instanceof AuthorizationError ? error.status : (error as { name?: string }).name === "ZodError" ? 400 : 500;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Integration update failed" }, { status });
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    await prisma.integration.delete({
-      where: { id: params.id },
-    });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting integration:", error);
-    return NextResponse.json(
-      { error: "Failed to delete integration" },
-      { status: 500 }
-    );
-  }
+export async function DELETE() {
+  return NextResponse.json({ error: "Integration evidence is retained; disable it instead" }, { status: 405 });
 }
