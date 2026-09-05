@@ -120,12 +120,15 @@ export class HttpTaxProvider implements TaxProvider {
 
 export class ConfiguredTaxProvider implements TaxProvider {
   async quote(input: Parameters<TaxProvider["quote"]>[0]) {
-    const basisPoints = Number(process.env.TAX_RATE_BPS);
+    const configured = process.env.TAX_RATE_BPS;
+    if (!configured || !/^\d+$/.test(configured)) throw new ProviderConfigurationError("Tax (set an explicit TAX_RATE_BPS)");
+    const basisPoints = Number(configured);
     if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > 10_000) {
       throw new ProviderConfigurationError("Tax (set TAX_RATE_BPS or TAX_PROVIDER_URL)");
     }
-    const taxableCents = Math.max(0, input.subtotalCents - input.discountCents);
-    return { taxCents: Math.round(taxableCents * basisPoints / 10_000), providerRef: `configured-rate:${basisPoints}` };
+    if (![input.subtotalCents, input.discountCents].every(value => Number.isSafeInteger(value) && value >= 0) || input.discountCents > input.subtotalCents) throw new Error("Invalid taxable amount");
+    const taxableCents = input.subtotalCents - input.discountCents;
+    return { taxCents: Number((BigInt(taxableCents) * BigInt(basisPoints) + BigInt(5000)) / BigInt(10000)), providerRef: `configured-rate:${basisPoints}` };
   }
 }
 

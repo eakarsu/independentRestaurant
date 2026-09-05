@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import type { Actor } from "./authz";
+import { ORDER_WRITE_ROLES, REFUND_ROLES, AuthorizationError, type Actor } from "./authz";
 import { auditHash } from "./crypto";
 import { CommerceConflictError, CommerceValidationError } from "./orders";
 import { StripePaymentProvider, type PaymentProvider } from "./providers";
@@ -36,13 +36,18 @@ export async function beginPayment(
   input: { orderId: string; idempotencyKey: string; actor: Actor },
   provider: PaymentProvider = new StripePaymentProvider(),
 ) {
-  const existing = await prisma.paymentAttempt.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-  if (existing) return existing;
+  if (!(ORDER_WRITE_ROLES as readonly string[]).includes(input.actor.role)) throw new AuthorizationError("Billing role required");
   const order = await prisma.order.findUnique({ where: { id: input.orderId }, include: { customer: true } });
   if (!order) throw new CommerceValidationError("Order not found");
   if (input.actor.role === "CUSTOMER" && order.customer?.userId !== input.actor.userId) {
     throw new CommerceValidationError("A customer cannot pay another customer's order");
   }
+  const existing = await prisma.paymentAttempt.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+  if (existing) {
+    if (existing.orderId !== order.id) throw new CommerceConflictError("Payment idempotency key belongs to another order");
+    return existing;
+  }
+  if (["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(order.paymentStatus)) throw new CommerceConflictError("Order payment has already been captured");
   if (!["CONFIRMED", "PAYMENT_FAILED", "READY", "SERVED", "COMPLETED"].includes(order.status)) throw new CommerceConflictError(`Payment cannot start while order is ${order.status}`);
   const amountCents = Math.round(order.total * 100);
   const priorAttempt = order.status === "PAYMENT_FAILED"
@@ -53,6 +58,7 @@ export async function beginPayment(
   await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE`;
     const locked = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
+    if (["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(locked.paymentStatus)) throw new CommerceConflictError("Order payment has already been captured");
     if (!["CONFIRMED", "PAYMENT_FAILED", "READY", "SERVED", "COMPLETED"].includes(locked.status)) {
       throw new CommerceConflictError(`Payment cannot start while order is ${locked.status}`);
     }
@@ -89,8 +95,12 @@ export async function requestRefund(
   input: { orderId: string; idempotencyKey: string; amountCents: number; reason: string; actor: Actor },
   provider: PaymentProvider = new StripePaymentProvider(),
 ) {
+  if (!(REFUND_ROLES as readonly string[]).includes(input.actor.role)) throw new AuthorizationError("Refund authority required");
   const existing = await prisma.refund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-  if (existing) return existing;
+  if (existing) {
+    if (existing.orderId !== input.orderId || existing.amountCents !== input.amountCents || existing.reason !== input.reason || existing.requestedById !== input.actor.userId) throw new CommerceConflictError("Refund idempotency payload changed");
+    return existing;
+  }
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
     include: { paymentAttempts: { where: { status: "SUCCEEDED" }, orderBy: { createdAt: "desc" }, take: 1 }, refunds: { where: { status: "SUCCEEDED" } } },
@@ -156,14 +166,19 @@ export async function applyPaymentWebhook(input: {
     const order = await tx.order.findUnique({ where: { id: input.orderId } });
     if (!order) throw new CommerceValidationError("Webhook references an unknown order");
     const attempt = await tx.paymentAttempt.findFirst({
-      where: { OR: [{ providerRef: input.paymentReference }, { orderId: order.id, status: { in: ["PENDING", "REQUIRES_ACTION"] } }] },
+      where: { orderId: order.id, OR: [{ providerRef: input.paymentReference }, { status: { in: ["PENDING", "REQUIRES_ACTION"] } }] },
       orderBy: { createdAt: "desc" },
     });
     if (!attempt) throw new CommerceValidationError("Webhook does not match a payment attempt");
+    const priorEvent = await tx.orderEvent.findFirst({ where: { orderId: order.id, idempotencyKey: `stripe:${input.eventId}` } });
+    if (priorEvent) return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: { paymentAttempts: true, events: true } });
+    // Success is terminal for a payment attempt: retries and delayed failures must
+    // not undo fulfillment, cancellation or subsequent refunds.
+    if (attempt.status === "SUCCEEDED") return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: { paymentAttempts: true, events: true } });
     const webhookActor: Actor = { userId: "provider:stripe", role: "PROVIDER" };
     if (input.eventType === "payment_intent.succeeded") {
       const received = input.amountReceivedCents ?? 0;
-      if (received < attempt.amountCents) throw new CommerceConflictError("Captured amount is below the order payment amount");
+      if (!Number.isSafeInteger(received) || received !== attempt.amountCents) throw new CommerceConflictError("Captured amount does not match the order payment amount");
       await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { providerRef: input.paymentReference, status: "SUCCEEDED", failureCode: null, failureMessage: null } });
       await tx.payment.upsert({
         where: { reference: input.paymentReference },
@@ -178,7 +193,7 @@ export async function applyPaymentWebhook(input: {
       await appendPaymentEvent(tx, { orderId: order.id, type: "PAYMENT_CAPTURED", actor: webhookActor, idempotencyKey: `stripe:${input.eventId}`, payload: { paymentReference: input.paymentReference, amountCents: received } });
     } else {
       await tx.paymentAttempt.update({ where: { id: attempt.id }, data: { providerRef: input.paymentReference, status: "FAILED", failureCode: input.failureCode, failureMessage: input.failureMessage } });
-      await tx.order.update({ where: { id: order.id }, data: { paymentStatus: "FAILED", status: "PAYMENT_FAILED", lastError: input.failureMessage ?? "Payment failed", version: { increment: 1 } } });
+      await tx.order.update({ where: { id: order.id }, data: { paymentStatus: "FAILED", status: order.status === "CANCELLED" ? "CANCELLED" : "PAYMENT_FAILED", lastError: input.failureMessage ?? "Payment failed", version: { increment: 1 } } });
       await appendPaymentEvent(tx, { orderId: order.id, type: "PAYMENT_FAILED", actor: webhookActor, idempotencyKey: `stripe:${input.eventId}`, payload: { paymentReference: input.paymentReference, code: input.failureCode, message: input.failureMessage } });
     }
     return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: { paymentAttempts: true, events: true } });

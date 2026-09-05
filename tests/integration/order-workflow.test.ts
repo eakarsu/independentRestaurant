@@ -82,6 +82,13 @@ test("idempotent order reservation, partial fulfillment, cancellation, oversell,
   assert.equal(refunded.status, "REFUNDED");
   assert.equal(refunded.paymentStatus, "REFUNDED");
   assert.equal(await verifyOrderAuditChain(refundOrder.id), true);
+  await assert.rejects(beginPayment({orderId:refundOrder.id,idempotencyKey:`extra-payment-${suffix}`,actor},successfulPayment), /already been captured/);
+  await assert.rejects(beginPayment({orderId:refundOrder.id,idempotencyKey:`payment-${suffix}`,actor:{userId:merchant.id,role:'CUSTOMER'}},successfulPayment), /another customer's/);
+  await assert.rejects(requestRefund({orderId:refundOrder.id,idempotencyKey:`refund-${suffix}`,amountCents:1,reason:'changed',actor:merchantActor},successfulPayment), /payload changed/);
+  await applyPaymentWebhook({ eventId: `late-failure-${suffix}`, eventType: 'payment_intent.payment_failed', paymentReference: `intent-${suffix}`, orderId: refundOrder.id });
+  await applyPaymentWebhook({ eventId: `duplicate-success-${suffix}`, eventType: 'payment_intent.succeeded', paymentReference: `intent-${suffix}`, orderId: refundOrder.id, amountReceivedCents: Math.round(refundOrder.total * 100) });
+  assert.equal((await prisma.order.findUniqueOrThrow({where:{id:refundOrder.id}})).status,'REFUNDED');
+
 });
 
 test.after(async () => {
