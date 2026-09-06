@@ -96,12 +96,7 @@ if [[ ! -d node_modules ]]; then
   echo "Dependencies are absent. Run npm ci explicitly before startup." >&2
   exit 1
 fi
-for port in "$api_port" "$ui_port"; do
-  if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "Port $port is already in use; no process was stopped" >&2
-    exit 1
-  fi
-done
+node "$project_dir/scripts/clear-project-ports.cjs" "$api_port" "$ui_port"
 
 npx prisma migrate deploy
 npx prisma generate

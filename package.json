@@ -22,7 +22,8 @@
     "demo-data:load": "node scripts/load-demo-data.cjs",
     "demo-data:verify": "node scripts/load-demo-data.cjs --verify",
     "test:operations": "node scripts/test-operations.cjs",
-    "test:restore": "node scripts/verify-restore.cjs"
+    "test:restore": "node scripts/verify-restore.cjs",
+    "test:startup": "node scripts/test-port-cleanup.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",

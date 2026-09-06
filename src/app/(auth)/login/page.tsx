@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -16,10 +16,19 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
+  const [demoEnabled, setDemoEnabled] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/auth/demo-credentials?status=1', { cache: 'no-store', signal: controller.signal })
+      .then(async response => response.ok ? response.json() : { enabled: false })
+      .then(result => setDemoEnabled(result.enabled === true)).catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   const fillDemoCredentials = async () => {
     setError("");
@@ -110,7 +119,7 @@ function LoginForm() {
             />
           </div>
 
-          <button
+          {demoEnabled && <button
             type="button"
             onClick={fillDemoCredentials}
             disabled={demoLoading || loading}
@@ -118,7 +127,7 @@ function LoginForm() {
             style={{ width: '100%', marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', border: '1px solid currentColor', background: 'transparent', cursor: 'pointer' }}
           >
             {demoLoading ? "Loading Demo Credentials…" : "Auto Fill Demo Credentials"}
-          </button>
+          </button>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (
               <>

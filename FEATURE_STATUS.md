@@ -239,3 +239,7 @@ A fresh private custom-format PostgreSQL backup was restored into a disposable l
 - Applied additive migration `20260906020000_online_pickup` after private backup `before-online-ordering-1788721408440.dump`. Added `scripts/test-online-browser.cjs` and its Playwright development dependency for a repeatable isolated journey.
 - Updated Next.js, React, Auth.js and affected transitive packages. The current `npm audit` reports zero vulnerabilities, and tests/build/browser checks passed after the update. npm 11.19.1 was used to resolve an older npm dependency-resolution failure.
 - Remaining customer-ordering scope includes anonymous guest checkout, delivery-provider acceptance, dine-in seat/table ordering, scheduled kitchen capacity, automatic reminders and full production onboarding. This checkpoint completes the authenticated pickup workflow, not the whole restaurant backlog.
+
+### September 6 — local startup and autofill follow-up
+
+`start.sh` releases existing listeners owned by this project before migrations or builds, including the prior server process tree. It validates all port owners first and preserves unrelated applications. `npm run test:startup` passed for this project; a real repeated HomeServices startup also released both occupied ports and restarted successfully. Local autofill and authenticated browser login were verified across all five apps without changing account passwords. Local `.env` opt-ins and credentials remain untracked.
