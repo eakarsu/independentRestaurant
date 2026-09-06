@@ -5,7 +5,7 @@ export default withAuth(
   function proxy(request) {
     const token = request.nextauth.token;
     const path = request.nextUrl.pathname;
-    if (["/settings", "/integrations"].some((route) => path.startsWith(route))) {
+    if (["/settings", "/integrations", "/online-ordering"].some((route) => path.startsWith(route))) {
       if (!["ADMIN", "MERCHANT", "MANAGER"].includes(String(token?.role))) {
         return NextResponse.redirect(new URL("/dashboard", request.url));
       }
@@ -20,6 +20,8 @@ export default withAuth(
     return response;
   },
   {
+    cookies: { sessionToken: { name: "restaurant.session-token" } },
+    pages: { signIn: "/login", error: "/login" },
     callbacks: {
       authorized: ({ token, req }) => req.nextUrl.pathname.startsWith("/api/auth") || Boolean(token && !token.invalid),
     },
@@ -28,8 +30,11 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    "/dashboard/:path*", "/orders/:path*", "/reservations/:path*", "/menu/:path*",
+    "/online-ordering/:path*", "/dashboard/:path*", "/orders/:path*", "/reservations/:path*", "/menu/:path*",
     "/inventory/:path*", "/staff/:path*", "/customers/:path*", "/reports/:path*",
     "/kitchen/:path*", "/settings/:path*", "/integrations/:path*",
+    "/ai/:path*", "/timesheets/:path*", "/search/:path*", "/notifications/:path*", "/loyalty/:path*",
+    "/recipes/:path*", "/waste/:path*", "/promotions/:path*", "/scheduling/:path*",
+    "/performance/:path*", "/tips/:path*", "/locations/:path*", "/deliveries/:path*",
   ],
 };

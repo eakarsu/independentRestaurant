@@ -1,3 +1,4 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -5,7 +6,7 @@ import { AuthorizationError, REFUND_ROLES, requireActor } from "@/lib/commerce/a
 
 const schema = z.object({ isActive: z.boolean() });
 
-export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handlePATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const actor = await requireActor(REFUND_ROLES);
@@ -24,6 +25,10 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   }
 }
 
-export async function DELETE() {
+async function handleDELETE() {
   return NextResponse.json({ error: "Integration evidence is retained; disable it instead" }, { status: 405 });
 }
+
+export const PATCH = withAccess(MANAGEMENT, handlePATCH);
+
+export const DELETE = withAccess(MANAGEMENT, handleDELETE);

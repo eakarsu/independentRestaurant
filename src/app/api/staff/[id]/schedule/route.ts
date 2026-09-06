@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const body = await request.json();
@@ -48,3 +49,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
     return NextResponse.json({ error: "Failed to create schedule" }, { status: 500 });
   }
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);
+
+export const POST = withAccess(["ADMIN", "MERCHANT"], handlePOST);

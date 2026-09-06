@@ -1,47 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-
-export async function GET() {
-  try {
-    const tables = await prisma.table.findMany({
-      orderBy: { number: "asc" },
-      include: {
-        reservations: {
-          where: {
-            date: {
-              gte: new Date(new Date().setHours(0, 0, 0, 0)),
-              lt: new Date(new Date().setHours(23, 59, 59, 999)),
-            },
-            status: {
-              in: ["PENDING", "CONFIRMED", "SEATED"],
-            },
-          },
-        },
-      },
-    });
-    return NextResponse.json(tables);
-  } catch (error) {
-    console.error("Error fetching tables:", error);
-    return NextResponse.json({ error: "Failed to fetch tables" }, { status: 500 });
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const table = await prisma.table.create({
-      data: {
-        number: body.number,
-        capacity: body.capacity,
-        section: body.section,
-        status: body.status || "AVAILABLE",
-        posX: body.posX,
-        posY: body.posY,
-      },
-    });
-    return NextResponse.json(table, { status: 201 });
-  } catch (error) {
-    console.error("Error creating table:", error);
-    return NextResponse.json({ error: "Failed to create table" }, { status: 500 });
-  }
-}
+import prisma from '@/lib/prisma';
+import {OPERATIONS,MANAGEMENT} from '@/lib/commerce/access';
+import {endpoint,body,mutate,audit} from '@/lib/operations/core';
+import {tableSchema} from '@/lib/operations/frontdesk';
+export const GET=endpoint(OPERATIONS,async()=>Response.json(await prisma.table.findMany({orderBy:{number:'asc'},include:{reservations:{where:{status:{in:['PENDING','CONFIRMED','SEATED']},time:{gte:new Date(Date.now()-86400000),lte:new Date(Date.now()+86400000)}}}},take:500})));
+export const POST=endpoint(MANAGEMENT,async(actor,request:Request)=>{const input=tableSchema.parse(await body(request));return Response.json(await mutate(actor,request,'table.create',input,async tx=>{const row=await tx.table.create({data:input});await audit(tx,actor,'TABLE_CREATED','Table',row.id,input);return row;}),{status:201});});

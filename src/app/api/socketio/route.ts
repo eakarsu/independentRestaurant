@@ -1,3 +1,4 @@
+import { withAccess, OPERATIONS } from "@/lib/commerce/access";
 /**
  * GET /api/socketio
  *
@@ -14,7 +15,7 @@
  */
 import { NextResponse } from "next/server";
 
-export async function GET() {
+async function handleGET() {
   return NextResponse.json({
     info: "Socket.IO endpoint — connect via socket.io-client at /api/socketio",
     events: [
@@ -25,3 +26,5 @@ export async function GET() {
     ],
   });
 }
+
+export const GET = withAccess(OPERATIONS, handleGET);

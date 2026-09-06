@@ -29,6 +29,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const navigation = [
+  { name: "AI workspace", href: "/ai", icon: TrendingUp },
   { name: "Dashboard", href: "/dashboard", icon: Home },
   { name: "Reservations", href: "/reservations", icon: CalendarDays },
   { name: "Orders", href: "/orders", icon: ClipboardList },
@@ -40,6 +41,7 @@ const navigation = [
   { name: "Waste Tracking", href: "/waste", icon: Trash2 },
   { name: "Promotions", href: "/promotions", icon: Tag },
   { name: "Staff", href: "/staff", icon: Users },
+  { name: "Timesheets", href: "/timesheets", icon: CalendarClock },
   { name: "Scheduling", href: "/scheduling", icon: CalendarClock },
   { name: "Performance", href: "/performance", icon: TrendingUp },
   { name: "Tips", href: "/tips", icon: DollarSign },
@@ -49,6 +51,7 @@ const navigation = [
   { name: "Reports", href: "/reports", icon: BarChart3 },
   { name: "Locations", href: "/locations", icon: MapPin },
   { name: "Integrations", href: "/integrations", icon: Plug },
+  { name: "Online Ordering", href: "/online-ordering", icon: Settings },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

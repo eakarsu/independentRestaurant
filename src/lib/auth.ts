@@ -4,6 +4,11 @@ import { prisma } from "./prisma";
 import bcrypt from "bcryptjs";
 
 export const authOptions: NextAuthOptions = {
+  cookies: {
+    sessionToken: { name: "restaurant.session-token", options: { httpOnly: true, sameSite: "lax", path: "/", secure: process.env.NEXTAUTH_URL?.startsWith("https://") === true } },
+    csrfToken: { name: "restaurant.csrf-token", options: { httpOnly: true, sameSite: "lax", path: "/", secure: process.env.NEXTAUTH_URL?.startsWith("https://") === true } },
+    callbackUrl: { name: "restaurant.callback-url", options: { sameSite: "lax", path: "/", secure: process.env.NEXTAUTH_URL?.startsWith("https://") === true } },
+  },
   providers: [
     CredentialsProvider({
       name: "Credentials",

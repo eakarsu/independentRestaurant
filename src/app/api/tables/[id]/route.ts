@@ -1,57 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-
-export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    const table = await prisma.table.findUnique({
-      where: { id: params.id },
-      include: {
-        reservations: true,
-        orders: true,
-      },
-    });
-    if (!table) {
-      return NextResponse.json({ error: "Table not found" }, { status: 404 });
-    }
-    return NextResponse.json(table);
-  } catch (error) {
-    console.error("Error fetching table:", error);
-    return NextResponse.json({ error: "Failed to fetch table" }, { status: 500 });
-  }
-}
-
-export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    const body = await request.json();
-    const table = await prisma.table.update({
-      where: { id: params.id },
-      data: {
-        number: body.number,
-        capacity: body.capacity,
-        section: body.section,
-        status: body.status,
-        posX: body.posX,
-        posY: body.posY,
-      },
-    });
-    return NextResponse.json(table);
-  } catch (error) {
-    console.error("Error updating table:", error);
-    return NextResponse.json({ error: "Failed to update table" }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    await prisma.table.delete({
-      where: { id: params.id },
-    });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting table:", error);
-    return NextResponse.json({ error: "Failed to delete table" }, { status: 500 });
-  }
-}
+import prisma from '@/lib/prisma';
+import {OPERATIONS,MANAGEMENT} from '@/lib/commerce/access';
+import {endpoint,body,mutate,OperationError} from '@/lib/operations/core';
+import {updateTable} from '@/lib/operations/frontdesk';
+type Context={params:Promise<{id:string}>};
+export const GET=endpoint(OPERATIONS,async(_actor,_request:Request,p:Context)=>{const {id}=await p.params;const row=await prisma.table.findUnique({where:{id}});if(!row)throw new OperationError('Table not found',404);return Response.json(row);});
+export const PUT=endpoint(OPERATIONS,async(actor,request:Request,p:Context)=>{const {id}=await p.params;const input=await body(request);if(!MANAGEMENT.includes(actor.role)&&Object.keys(input as object).some(k=>k!=='status'))throw new OperationError('Manager access required for table configuration',403);return Response.json(await mutate(actor,request,'table.update',{id,input},tx=>updateTable(tx,actor,id,input)));});
+export const DELETE=endpoint(MANAGEMENT,async(actor,request:Request,p:Context)=>{const {id}=await p.params;return Response.json(await mutate(actor,request,'table.archive',{id},tx=>updateTable(tx,actor,id,{status:'OUT_OF_SERVICE'})));});

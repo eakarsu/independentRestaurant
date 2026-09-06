@@ -16,5 +16,6 @@ export default defineConfig([
       "@typescript-eslint/no-empty-object-type": "off",
     },
   },
+  { files: ["scripts/**/*.cjs"], rules: { "@typescript-eslint/no-require-imports": "off" } },
   globalIgnores([".next/**", "node_modules/**", "next-env.d.ts"]),
 ]);

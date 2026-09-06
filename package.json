@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "node scripts/validate-runtime.mjs && next start",
     "lint": "eslint . --quiet",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "tsx --test tests/unit/**/*.test.ts",
+    "test:auth-routing": "node scripts/check-auth-routes.mjs",
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -17,7 +18,11 @@
     "db:studio": "prisma studio",
     "worker:once": "tsx scripts/process-outbox.ts",
     "user:provision": "tsx scripts/provision-user.ts",
-    "create-admin": "tsx scripts/provision-user.ts"
+    "create-admin": "tsx scripts/provision-user.ts",
+    "demo-data:load": "node scripts/load-demo-data.cjs",
+    "demo-data:verify": "node scripts/load-demo-data.cjs --verify",
+    "test:operations": "node scripts/test-operations.cjs",
+    "test:restore": "node scripts/verify-restore.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",
@@ -45,29 +50,31 @@
     "jspdf": "^4.1.0",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.400.0",
-    "next": "^16.2.10",
-    "next-auth": "^4.24.13",
+    "next": "16.3.4",
+    "next-auth": "4.24.15",
     "prisma": "^5.22.0",
-    "react": "^19.2.4",
+    "react": "19.2.8",
     "react-day-picker": "^10.0.1",
-    "react-dom": "^19.2.4",
+    "react-dom": "19.2.8",
     "react-hook-form": "^7.50.0",
     "recharts": "^2.12.0",
     "resend": "^6.12.2",
     "socket.io": "^4.8.3",
     "stripe": "^22.1.0",
     "tailwind-merge": "^2.2.0",
+    "twilio": "^6.1.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.19.25",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.17",
     "eslint": "^9.39.2",
-    "eslint-config-next": "^16.2.10",
-    "postcss": "^8",
+    "eslint-config-next": "16.3.4",
+    "postcss": "8.5.28",
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.7.0",
@@ -75,7 +82,7 @@
   },
   "overrides": {
     "next": {
-      "postcss": "8.5.10"
+      "postcss": "8.5.28"
     },
     "next-auth": {
       "uuid": "11.1.1"

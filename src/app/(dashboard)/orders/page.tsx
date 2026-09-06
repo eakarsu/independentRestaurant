@@ -1,5 +1,7 @@
 "use client";
 
+import { OrderFinance } from "@/components/operations/order-finance";
+import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
 import { useState, useEffect, useCallback } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +63,7 @@ interface OrderItem {
 }
 
 interface Order {
+  pickupAt?: string | null;
   id: string;
   orderNumber: string;
   type: string;
@@ -89,6 +92,7 @@ interface CartItem {
 }
 
 function OrdersPageContent() {
+  const mutationFetch = useMutationFetch();
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [tables, setTables] = useState<TableData[]>([]);
@@ -286,9 +290,9 @@ function OrdersPageContent() {
       return;
     }
     try {
-      const response = await fetch("/api/orders", {
+      const response = await mutationFetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: orderType,
           tableId: orderType === "DINE_IN" ? selectedTable : null,
@@ -323,9 +327,9 @@ function OrdersPageContent() {
         confirmLabel: "Cancel Order",
         onConfirm: async () => {
           try {
-            const response = await fetch(`/api/orders/${orderId}/actions`, {
+            const response = await mutationFetch(`/api/orders/${orderId}/actions`, {
               method: "POST",
-              headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ toStatus: status, reason: "Cancelled by restaurant operator" }),
             });
             if (response.ok) {
@@ -342,9 +346,9 @@ function OrdersPageContent() {
     }
 
     try {
-      const response = await fetch(`/api/orders/${orderId}/actions`, {
+      const response = await mutationFetch(`/api/orders/${orderId}/actions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ toStatus: status }),
       });
       if (response.ok) {
@@ -358,20 +362,21 @@ function OrdersPageContent() {
 
   const handlePayOrder = async (orderId: string) => {
     try {
-      const response = await fetch(`/api/orders/${orderId}/pay`, {
+      const response = await mutationFetch(`/api/orders/${orderId}/pay`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json" },
       });
       if (response.ok) {
         const payment = await response.json();
-        if (payment.redirectUrl) window.location.assign(payment.redirectUrl);
+        if (payment.redirectUrl) {const url=new URL(payment.redirectUrl);if(url.protocol!=="https:"||url.hostname!=="checkout.stripe.com")throw Error("Unexpected payment destination");window.location.assign(url.href);}
         else {
           toast({ title: "Payment started", description: "Complete the authorization in the connected payment client." });
           fetchData();
         }
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to process payment", variant: "destructive" });
+      else {const result=await response.json();throw Error(result.error||"Payment outcome not confirmed");}
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error?error.message:"Payment outcome not confirmed", variant: "destructive" });
     }
   };
 
@@ -580,7 +585,7 @@ function OrdersPageContent() {
                         {getStatusBadge(order.status)}
                       </div>
                       <CardDescription>
-                        {order.type} {order.table && `• Table ${order.table.number}`}
+                        {order.type} {order.table && `• Table ${order.table.number}`} {order.pickupAt && `· Pickup ${new Date(order.pickupAt).toLocaleString()}`}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -738,7 +743,7 @@ function OrdersPageContent() {
                     {getStatusBadge(detailOrder.status)}
                   </DialogTitle>
                   <DialogDescription>
-                    {detailOrder.type} {detailOrder.table && `• Table ${detailOrder.table.number}`}
+                    {detailOrder.type} {detailOrder.table && `• Table ${detailOrder.table.number}`} {detailOrder.pickupAt && `· Pickup ${new Date(detailOrder.pickupAt).toLocaleString()}`}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -786,6 +791,7 @@ function OrdersPageContent() {
                   </div>
                 </div>
 
+                <OrderFinance key={detailOrder.id} orderId={detailOrder.id}/>
                 <DialogFooter className="flex-wrap gap-2">
                   {detailOrder.status === "PENDING" && (
                     <Button size="sm" onClick={() => { handleUpdateOrderStatus(detailOrder.id, "CONFIRMED"); setIsDetailSheetOpen(false); }}>

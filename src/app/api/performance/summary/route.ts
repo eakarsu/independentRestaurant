@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const days = parseInt(searchParams.get("days") || "30");
@@ -83,3 +84,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);

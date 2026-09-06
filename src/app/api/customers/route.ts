@@ -1,8 +1,9 @@
+import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getPaginationParams, getSortParams, paginatedResponse, handleApiError } from "@/lib/api-helpers";
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get("search");
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     const body = await request.json();
     const customer = await prisma.customer.create({
@@ -81,3 +82,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create customer" }, { status: 500 });
   }
 }
+
+export const GET = withAccess(OPERATIONS, handleGET);
+
+export const POST = withAccess(MANAGEMENT, handlePOST);

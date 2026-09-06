@@ -18,6 +18,10 @@ const input = z.object({
 
 async function main() {
   try {
+    if (process.env.PROVISION_SKIP_EXISTING === "1") {
+      const existing = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
+      if (existing) { process.stdout.write("Existing administrator preserved\n"); return; }
+    }
     const password = await bcrypt.hash(input.password, 12);
     const user = await prisma.user.upsert({
       where: { email: input.email },

@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 
 const targetPort = Number(process.env.API_PORT);
 const listenPort = Number(process.env.UI_PORT);
@@ -22,6 +23,26 @@ const server = http.createServer((request, response) => {
     response.end(JSON.stringify({ error: "Application is starting" }));
   });
   request.pipe(upstream);
+});
+
+// Next's development client needs the HMR WebSocket before hydration completes.
+// Forward upgrades as well as ordinary HTTP requests through the UI port.
+server.on("upgrade", (request, socket, head) => {
+  const upstream = net.connect(targetPort, "127.0.0.1", () => {
+    const lines = [`${request.method} ${request.url} HTTP/${request.httpVersion}`];
+    for (let i = 0; i < request.rawHeaders.length; i += 2) {
+      const name = request.rawHeaders[i];
+      const value = name.toLowerCase() === "host" ? `127.0.0.1:${targetPort}` : request.rawHeaders[i + 1];
+      lines.push(`${name}: ${value}`);
+    }
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head.length) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+  socket.on("close", () => upstream.destroy());
+  upstream.on("close", () => socket.destroy());
 });
 
 server.listen(listenPort, "127.0.0.1", () => {

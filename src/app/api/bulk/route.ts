@@ -1,9 +1,14 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextResponse } from "next/server";
 
-export async function DELETE() {
+async function handleDELETE() {
   return NextResponse.json({ error: "Unscoped bulk deletion is disabled" }, { status: 405 });
 }
 
-export async function PATCH() {
+async function handlePATCH() {
   return NextResponse.json({ error: "Unscoped bulk mutation is disabled" }, { status: 405 });
 }
+
+export const DELETE = withAccess(MANAGEMENT, handleDELETE);
+
+export const PATCH = withAccess(MANAGEMENT, handlePATCH);

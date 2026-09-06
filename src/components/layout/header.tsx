@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Bell, Search, Menu, LogOut, User } from "lucide-react";
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -47,52 +48,15 @@ export function Header({ title, onMenuClick }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="relative hidden md:block">
+        <form action="/search" className="relative hidden md:block">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search..."
+            name="q" aria-label="Search restaurant records" placeholder="Search records…"
             className="w-64 pl-9"
           />
-        </div>
+        </form>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-                3
-              </span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <div className="flex flex-col gap-1">
-                <p className="text-sm font-medium">New reservation</p>
-                <p className="text-xs text-muted-foreground">
-                  John Doe booked a table for 4 at 7:00 PM
-                </p>
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <div className="flex flex-col gap-1">
-                <p className="text-sm font-medium">Low inventory alert</p>
-                <p className="text-xs text-muted-foreground">
-                  Chicken breast is below par level
-                </p>
-              </div>
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <div className="flex flex-col gap-1">
-                <p className="text-sm font-medium">New review</p>
-                <p className="text-xs text-muted-foreground">
-                  5-star review from Sarah M.
-                </p>
-              </div>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button asChild variant="ghost" size="icon"><Link href="/notifications" aria-label="Notification history"><Bell className="h-5 w-5" /></Link></Button>
 
         {session?.user && (
           <DropdownMenu>
@@ -114,9 +78,9 @@ export function Header({ title, onMenuClick }: HeaderProps) {
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuLabel>My Account</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <User className="mr-2 h-4 w-4" />
-                Profile
+              <DropdownMenuItem asChild>
+                <Link href="/settings"><User className="mr-2 h-4 w-4" />
+                Profile and settings</Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ callbackUrl: "/login" })}>

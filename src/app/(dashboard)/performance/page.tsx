@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchCollection } from "@/lib/fetchCollection";
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -108,16 +110,16 @@ export default function PerformancePage() {
       const [summaryRes, recordsRes, staffRes] = await Promise.all([
         fetch(`/api/performance/summary?days=${timePeriod}`),
         fetch("/api/performance"),
-        fetch("/api/staff"),
+        fetchCollection<Staff>("/api/staff"),
       ]);
       const [summaryData, recordsData, staffData] = await Promise.all([
         summaryRes.json(),
         recordsRes.json(),
-        staffRes.json(),
+        staffRes,
       ]);
       setSummaries(Array.isArray(summaryData) ? summaryData : []);
       setRecords(Array.isArray(recordsData) ? recordsData : []);
-      setStaff(Array.isArray(staffData) ? staffData : []);
+      setStaff(staffData);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {

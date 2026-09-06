@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handlePUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const body = await request.json();
@@ -21,7 +22,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleDELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     await prisma.menuCategory.delete({
@@ -33,3 +34,7 @@ export async function DELETE(request: NextRequest, props: { params: Promise<{ id
     return NextResponse.json({ error: "Failed to delete category" }, { status: 500 });
   }
 }
+
+export const PUT = withAccess(MANAGEMENT, handlePUT);
+
+export const DELETE = withAccess(MANAGEMENT, handleDELETE);

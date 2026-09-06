@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-export async function GET(request: NextRequest) {
+async function handleGET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const type = searchParams.get("type") || "daily";
@@ -98,3 +99,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to generate report" }, { status: 500 });
   }
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);

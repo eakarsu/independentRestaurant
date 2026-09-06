@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,7 @@ const TIER_THRESHOLDS = {
 };
 
 export default function LoyaltyPage() {
+  const requestKey = useRef<{body:string;key:string}|null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -69,15 +70,19 @@ export default function LoyaltyPage() {
     if (!selectedCustomer || !pointsToAdd) return;
 
     try {
-      await fetch(`/api/customers/${selectedCustomer.id}/loyalty`, {
+      const signature = `${selectedCustomer.id}:${pointsToAdd}`;
+      if (requestKey.current?.body !== signature) requestKey.current = {body: signature, key: crypto.randomUUID()};
+      const response = await fetch(`/api/customers/${selectedCustomer.id}/loyalty`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey.current!.key },
         body: JSON.stringify({
           points: parseInt(pointsToAdd),
           type: "earned",
           description: "Manual points addition",
         }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || "Points update failed");
+      requestKey.current = null;
       toast({ title: "Success", description: `Added ${pointsToAdd} points` });
       setPointsToAdd("");
       fetchCustomers();

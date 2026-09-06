@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-export async function GET() {
+async function handleGET() {
   try {
     const categories = await prisma.menuCategory.findMany({
       orderBy: { sortOrder: "asc" },
@@ -18,7 +19,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     const body = await request.json();
     const category = await prisma.menuCategory.create({
@@ -35,3 +36,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to create category" }, { status: 500 });
   }
 }
+
+export const GET = withAccess(OPERATIONS, handleGET);
+
+export const POST = withAccess(MANAGEMENT, handlePOST);

@@ -374,8 +374,9 @@ export default function PromotionsPage() {
           </Dialog>
         </div>
 
-        <Tabs defaultValue="active">
+        <Tabs defaultValue="all">
           <TabsList>
+            <TabsTrigger value="all">All ({promotions.length})</TabsTrigger>
             <TabsTrigger value="active">Active ({activePromotions.length})</TabsTrigger>
             <TabsTrigger value="inactive">Inactive ({inactivePromotions.length})</TabsTrigger>
           </TabsList>
@@ -441,6 +442,61 @@ export default function PromotionsPage() {
                 </Card>
               )}
             </div>
+          </TabsContent>
+
+          <TabsContent value="all">
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>Code</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {promotions.map((promo) => (
+                      <TableRow key={promo.id} className="cursor-pointer" onClick={() => openDetail(promo)}>
+                        <TableCell className="font-medium">{promo.name}</TableCell>
+                        <TableCell>{getTypeLabel(promo.type)}</TableCell>
+                        <TableCell>
+                          {promo.type === "FIXED_AMOUNT" ? formatCurrency(promo.value) : `${promo.value}%`}
+                        </TableCell>
+                        <TableCell>{promo.code || "-"}</TableCell>
+                        <TableCell>
+                          {isExpired(promo.endDate) ? (
+                            <Badge variant="destructive">Expired</Badge>
+                          ) : (
+                            <Badge variant="secondary">{promo.isActive ? "Active" : "Inactive"}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(promo)}>
+                              <Edit className="h-3 w-3" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDelete(promo.id)}>
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {promotions.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          No promotions
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="inactive">

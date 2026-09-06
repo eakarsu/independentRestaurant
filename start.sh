@@ -104,7 +104,9 @@ for port in "$api_port" "$ui_port"; do
 done
 
 npx prisma migrate deploy
-ALLOW_USER_PROVISION=1 PROVISION_USER_ROLE=ADMIN npm run create-admin
+npx prisma generate
+ALLOW_USER_PROVISION=1 PROVISION_USER_ROLE=ADMIN PROVISION_SKIP_EXISTING=1 npm run create-admin
+if [[ "${LOAD_DEMO_DATA:-false}" == true ]]; then npm run demo-data:load; fi
 npm run dev -- --hostname 127.0.0.1 --port "$api_port" &
 api_pid=$!
 API_PORT="$api_port" UI_PORT="$ui_port" node scripts/runtime-proxy.mjs &

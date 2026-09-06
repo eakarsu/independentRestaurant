@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const promotion = await prisma.promotion.findUnique({
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handlePUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const body = await request.json();
@@ -49,7 +50,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleDELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     await prisma.promotion.delete({
@@ -65,3 +66,9 @@ export async function DELETE(request: NextRequest, props: { params: Promise<{ id
     );
   }
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);
+
+export const PUT = withAccess(MANAGEMENT, handlePUT);
+
+export const DELETE = withAccess(MANAGEMENT, handleDELETE);

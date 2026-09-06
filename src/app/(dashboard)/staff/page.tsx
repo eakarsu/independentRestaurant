@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ interface FormErrors {
 }
 
 function StaffPageContent() {
+  const clockRequest = useRef<{signature:string;key:string}|null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -77,7 +78,7 @@ function StaffPageContent() {
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   const [formData, setFormData] = useState({
-    firstName: "", lastName: "", email: "", phone: "", position: "Server", hourlyRate: 15, role: "STAFF", password: "password123",
+    firstName: "", lastName: "", email: "", phone: "", position: "Server", hourlyRate: 15, role: "STAFF", password: "",
   });
 
   const openStaffDetail = (s: Staff) => {
@@ -159,6 +160,7 @@ function StaffPageContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
+      if (!res.ok) throw new Error((await res.json()).error || "Unable to save staff");
       if (res.ok) {
         toast({ title: "Success", description: `Staff member ${editingStaff ? "updated" : "created"}` });
         setIsDialogOpen(false);
@@ -196,11 +198,15 @@ function StaffPageContent() {
 
   const handleClockIn = async (staffId: string) => {
     try {
-      await fetch(`/api/staff/${staffId}/timeclock`, {
+      const signature = `${staffId}:clockIn`;
+      if (clockRequest.current?.signature !== signature) clockRequest.current = {signature, key: crypto.randomUUID()};
+      const response = await fetch(`/api/staff/${staffId}/timeclock`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": clockRequest.current!.key },
         body: JSON.stringify({ action: "clockIn" }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || "Time clock update failed");
+      clockRequest.current = null;
       toast({ title: "Success", description: "Clocked in successfully" });
     } catch {
       toast({ title: "Error", description: "Failed to clock in", variant: "destructive" });
@@ -209,11 +215,15 @@ function StaffPageContent() {
 
   const handleClockOut = async (staffId: string) => {
     try {
-      await fetch(`/api/staff/${staffId}/timeclock`, {
+      const signature = `${staffId}:clockOut`;
+      if (clockRequest.current?.signature !== signature) clockRequest.current = {signature, key: crypto.randomUUID()};
+      const response = await fetch(`/api/staff/${staffId}/timeclock`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": clockRequest.current!.key },
         body: JSON.stringify({ action: "clockOut" }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || "Time clock update failed");
+      clockRequest.current = null;
       toast({ title: "Success", description: "Clocked out successfully" });
     } catch {
       toast({ title: "Error", description: "Failed to clock out", variant: "destructive" });
@@ -221,7 +231,7 @@ function StaffPageContent() {
   };
 
   const resetForm = () => {
-    setFormData({ firstName: "", lastName: "", email: "", phone: "", position: "Server", hourlyRate: 15, role: "STAFF", password: "password123" });
+    setFormData({ firstName: "", lastName: "", email: "", phone: "", position: "Server", hourlyRate: 15, role: "STAFF", password: "" });
     setFormErrors({});
   };
 
@@ -762,6 +772,7 @@ function StaffPageContent() {
 }
 
 export default function StaffPage() {
+  const clockRequest = useRef<{signature:string;key:string}|null>(null);
   return (
     <ErrorBoundary>
       <StaffPageContent />

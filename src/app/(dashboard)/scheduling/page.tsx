@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchCollection } from "@/lib/fetchCollection";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,19 +93,20 @@ export default function SchedulingPage() {
     try {
       const weekEnd = new Date(currentWeek);
       weekEnd.setDate(weekEnd.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
 
       const [schedulesRes, staffRes] = await Promise.all([
         fetch(`/api/schedules?startDate=${currentWeek.toISOString()}&endDate=${weekEnd.toISOString()}`),
-        fetch("/api/staff"),
+        fetchCollection<Staff>("/api/staff"),
       ]);
 
       const [schedulesData, staffData] = await Promise.all([
         schedulesRes.json(),
-        staffRes.json(),
+        staffRes,
       ]);
 
       setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
-      setStaff(Array.isArray(staffData) ? staffData : []);
+      setStaff(staffData);
     } catch {
       toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
     } finally {

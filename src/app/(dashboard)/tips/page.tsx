@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchCollection } from "@/lib/fetchCollection";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,14 +54,14 @@ export default function TipsPage() {
     try {
       const [tipsRes, staffRes] = await Promise.all([
         fetch("/api/tips"),
-        fetch("/api/staff"),
+        fetchCollection<Staff>("/api/staff"),
       ]);
       const [tipsData, staffData] = await Promise.all([
         tipsRes.json(),
-        staffRes.json(),
+        staffRes,
       ]);
       setTips(Array.isArray(tipsData) ? tipsData : []);
-      setStaff(Array.isArray(staffData) ? staffData : []);
+      setStaff(staffData);
     } catch {
       toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
     } finally {

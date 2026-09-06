@@ -1,5 +1,6 @@
 "use client";
 
+import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +63,7 @@ interface TableData {
 }
 
 interface Reservation {
+  version: number;
   id: string;
   customerName: string;
   customerPhone: string;
@@ -87,6 +89,7 @@ interface WaitlistEntry {
 }
 
 export default function ReservationsPage() {
+  const mutationFetch = useMutationFetch();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [tables, setTables] = useState<TableData[]>([]);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
@@ -160,6 +163,7 @@ export default function ReservationsPage() {
         fetch("/api/waitlist"),
       ]);
 
+      if (![reservationsRes, tablesRes, waitlistRes].every(r=>r.ok)) throw new Error("Unable to load reservation data");
       const [reservationsData, tablesData, waitlistData] = await Promise.all([
         reservationsRes.json(),
         tablesRes.json(),
@@ -179,7 +183,7 @@ export default function ReservationsPage() {
 
   const handleCreateReservation = async () => {
     try {
-      const response = await fetch("/api/reservations", {
+      const response = await mutationFetch("/api/reservations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -208,11 +212,12 @@ export default function ReservationsPage() {
     if (!editingReservation) return;
 
     try {
-      const response = await fetch(`/api/reservations/${editingReservation.id}`, {
+      const response = await mutationFetch(`/api/reservations/${editingReservation.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
+          version: editingReservation.version,
           date: formData.date.toISOString(),
           time: new Date(`${format(formData.date, "yyyy-MM-dd")}T${formData.time}`).toISOString(),
           tableId: formData.tableId || null,
@@ -236,25 +241,25 @@ export default function ReservationsPage() {
 
   const handleDeleteReservation = async (id: string) => {
     try {
-      const response = await fetch(`/api/reservations/${id}`, { method: "DELETE" });
+      const response = await mutationFetch(`/api/reservations/${id}`, { method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({version: reservations.find(r=>r.id===id)?.version, reason: "Cancelled by restaurant operator"}) });
       if (response.ok) {
-        toast({ title: "Success", description: "Reservation deleted" });
+        toast({ title: "Success", description: "Reservation cancelled" });
         fetchData();
       } else {
-        throw new Error("Failed to delete reservation");
+        throw new Error("Failed to cancel reservation");
       }
     } catch (error) {
       console.error("Error deleting reservation:", error);
-      toast({ title: "Error", description: "Failed to delete reservation", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to cancel reservation", variant: "destructive" });
     }
   };
 
   const handleUpdateReservationStatus = async (id: string, status: string) => {
     try {
-      const response = await fetch(`/api/reservations/${id}`, {
+      const response = await mutationFetch(`/api/reservations/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, version: reservations.find(r=>r.id===id)?.version, ...(status === "CANCELLED" ? {reason: "Cancelled by restaurant operator"} : {}) }),
       });
 
       if (response.ok) {
@@ -271,7 +276,7 @@ export default function ReservationsPage() {
 
   const handleCreateTable = async () => {
     try {
-      const response = await fetch("/api/tables", {
+      const response = await mutationFetch("/api/tables", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(tableFormData),
@@ -293,7 +298,7 @@ export default function ReservationsPage() {
 
   const handleUpdateTableStatus = async (id: string, status: string) => {
     try {
-      const response = await fetch(`/api/tables/${id}`, {
+      const response = await mutationFetch(`/api/tables/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -313,7 +318,7 @@ export default function ReservationsPage() {
 
   const handleAddToWaitlist = async () => {
     try {
-      const response = await fetch("/api/waitlist", {
+      const response = await mutationFetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(waitlistFormData),
@@ -335,7 +340,7 @@ export default function ReservationsPage() {
 
   const handleSeatWaitlistEntry = async (id: string) => {
     try {
-      const response = await fetch(`/api/waitlist/${id}`, {
+      const response = await mutationFetch(`/api/waitlist/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "SEATED" }),
@@ -355,7 +360,7 @@ export default function ReservationsPage() {
 
   const handleRemoveFromWaitlist = async (id: string) => {
     try {
-      const response = await fetch(`/api/waitlist/${id}`, { method: "DELETE" });
+      const response = await mutationFetch(`/api/waitlist/${id}`, { method: "DELETE" });
       if (response.ok) {
         toast({ title: "Success", description: "Removed from waitlist" });
         fetchData();

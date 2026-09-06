@@ -1,65 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-
-export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    const reservation = await prisma.reservation.findUnique({
-      where: { id: params.id },
-      include: {
-        table: true,
-        customer: true,
-      },
-    });
-    if (!reservation) {
-      return NextResponse.json({ error: "Reservation not found" }, { status: 404 });
-    }
-    return NextResponse.json(reservation);
-  } catch (error) {
-    console.error("Error fetching reservation:", error);
-    return NextResponse.json({ error: "Failed to fetch reservation" }, { status: 500 });
-  }
-}
-
-export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    const body = await request.json();
-    const reservation = await prisma.reservation.update({
-      where: { id: params.id },
-      data: {
-        customerName: body.customerName,
-        customerPhone: body.customerPhone,
-        customerEmail: body.customerEmail,
-        partySize: body.partySize,
-        date: body.date ? new Date(body.date) : undefined,
-        time: body.time ? new Date(body.time) : undefined,
-        tableId: body.tableId,
-        status: body.status,
-        specialOccasion: body.specialOccasion,
-        notes: body.notes,
-      },
-      include: {
-        table: true,
-        customer: true,
-      },
-    });
-    return NextResponse.json(reservation);
-  } catch (error) {
-    console.error("Error updating reservation:", error);
-    return NextResponse.json({ error: "Failed to update reservation" }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
-  const params = await props.params;
-  try {
-    await prisma.reservation.delete({
-      where: { id: params.id },
-    });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting reservation:", error);
-    return NextResponse.json({ error: "Failed to delete reservation" }, { status: 500 });
-  }
-}
+import {z} from 'zod';
+import prisma from '@/lib/prisma';
+import {OPERATIONS} from '@/lib/commerce/access';
+import {endpoint,body,mutate,OperationError} from '@/lib/operations/core';
+import {saveReservation} from '@/lib/operations/reservations';
+type Context={params:Promise<{id:string}>};
+export const GET=endpoint(OPERATIONS,async(_actor,_request:Request,props:Context)=>{const {id}=await props.params;const row=await prisma.reservation.findUnique({where:{id},include:{table:true,customer:true}});if(!row)throw new OperationError('Reservation not found',404);return Response.json(row);});
+export const PUT=endpoint(OPERATIONS,async(actor,request:Request,props:Context)=>{const {id}=await props.params;const input=await body(request);return Response.json(await mutate(actor,request,'reservation.update',{id,input},tx=>saveReservation(tx,actor,input,id)));});
+export const DELETE=endpoint(OPERATIONS,async(actor,request:Request,props:Context)=>{const {id}=await props.params;const input=z.object({version:z.number().int().positive(),reason:z.string().trim().min(5).max(1000)}).strict().parse(await body(request));return Response.json(await mutate(actor,request,'reservation.cancel',{id,...input},tx=>saveReservation(tx,actor,{...input,status:'CANCELLED'},id)));});

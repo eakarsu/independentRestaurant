@@ -1,7 +1,8 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-export async function GET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleGET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const staff = await prisma.staff.findUnique({
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handlePUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const body = await request.json();
@@ -50,7 +51,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+async function handleDELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const staff = await prisma.staff.findUnique({
@@ -69,3 +70,9 @@ export async function DELETE(request: NextRequest, props: { params: Promise<{ id
     return NextResponse.json({ error: "Failed to delete staff" }, { status: 500 });
   }
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);
+
+export const PUT = withAccess(["ADMIN", "MERCHANT"], handlePUT);
+
+export const DELETE = withAccess(["ADMIN", "MERCHANT"], handleDELETE);

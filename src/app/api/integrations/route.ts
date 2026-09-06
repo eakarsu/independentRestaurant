@@ -1,8 +1,9 @@
+import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AuthorizationError, REFUND_ROLES, requireActor } from "@/lib/commerce/authz";
 
-export async function GET() {
+async function handleGET() {
   try {
     await requireActor(REFUND_ROLES);
     const integrations = await prisma.integration.findMany({ orderBy: { createdAt: "asc" } });
@@ -21,6 +22,10 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+async function handlePOST() {
   return NextResponse.json({ error: "Provider credentials are configured only through the secret store/environment" }, { status: 405 });
 }
+
+export const GET = withAccess(MANAGEMENT, handleGET);
+
+export const POST = withAccess(MANAGEMENT, handlePOST);
