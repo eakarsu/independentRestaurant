@@ -48,6 +48,8 @@ export default function WastePage() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedWaste, setSelectedWaste] = useState<WasteRecord | null>(null);
 
   const [form, setForm] = useState({
     ingredientId: "",
@@ -77,6 +79,29 @@ export default function WastePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this waste record? The wasted quantity is returned to stock.")) return;
+    try {
+      const res = await fetch(`/api/waste/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast({ title: "Deleted", description: "Waste record removed and stock restored" });
+      fetchData();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete waste record", variant: "destructive" });
+    }
+  };
+
+  const startEdit = (record: WasteRecord) => {
+    setEditingId(record.id);
+    setForm({
+      ingredientId: record.ingredientId,
+      quantity: String(record.quantity),
+      reason: record.reason,
+      cost: String(record.cost),
+    });
+    setIsDialogOpen(true);
   };
 
   const handleSubmit = async () => {
@@ -278,21 +303,32 @@ export default function WastePage() {
                   <TableHead>Quantity</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Cost</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {records.slice(0, 20).map((record) => (
-                  <TableRow key={record.id}>
+                  <TableRow
+                    key={record.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => setSelectedWaste(record)}
+                  >
                     <TableCell>{new Date(record.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="font-medium">{record.ingredient.name}</TableCell>
                     <TableCell>{record.quantity} {record.ingredient.unit}</TableCell>
                     <TableCell><Badge variant="outline">{record.reason}</Badge></TableCell>
                     <TableCell className="text-destructive font-medium">{formatCurrency(record.cost)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); startEdit(record); }}>Edit</Button>
+                        <Button size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); handleDelete(record.id); }}>Delete</Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
                 {records.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       No waste records
                     </TableCell>
                   </TableRow>
@@ -302,6 +338,54 @@ export default function WastePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Full detail for the selected record, with its actions. */}
+      <Dialog open={!!selectedWaste} onOpenChange={(open) => { if (!open) setSelectedWaste(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Waste record detail</DialogTitle>
+            <DialogDescription>
+              {selectedWaste ? new Date(selectedWaste.createdAt).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedWaste && (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Ingredient</span>
+                <span className="font-medium">{selectedWaste.ingredient.name}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Quantity</span>
+                <span>{selectedWaste.quantity} {selectedWaste.ingredient.unit}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Reason</span>
+                <Badge variant="outline">{selectedWaste.reason}</Badge>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Cost</span>
+                <span className="font-bold text-destructive">{formatCurrency(selectedWaste.cost)}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Recorded by</span>
+                <span>{selectedWaste.recordedBy ?? "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Record id</span>
+                <span className="font-mono text-xs">{selectedWaste.id}</span>
+              </div>
+              <p className="text-xs text-muted-foreground pt-2 border-t">
+                Deleting this record returns {selectedWaste.quantity} {selectedWaste.ingredient.unit} to stock.
+              </p>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSelectedWaste(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => { const id = selectedWaste?.id; setSelectedWaste(null); if (id) handleDelete(id); }}>Delete</Button>
+            <Button onClick={() => { const w = selectedWaste; setSelectedWaste(null); if (w) startEdit(w); }}>Edit</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
