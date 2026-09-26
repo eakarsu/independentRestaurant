@@ -99,7 +99,8 @@ export default function WastePage() {
       ingredientId: record.ingredientId,
       quantity: String(record.quantity),
       reason: record.reason,
-      cost: String(record.cost),
+      // cost is derived server-side from ingredient cost x quantity
+      notes: "",
     });
     setIsDialogOpen(true);
   };
