@@ -22,12 +22,41 @@ async function handlePOST(request: NextRequest) {
     const body = await request.json();
     const { staffId, amount, source, date } = body;
 
+    // Previously unvalidated: a negative or non-numeric amount, an unknown
+    // staff id or an unparseable date were all written straight to the table.
+    if (typeof staffId !== "string" || !staffId.trim()) {
+      return NextResponse.json({ error: "staffId is required" }, { status: 400 });
+    }
+    const amountNumber = Number(amount);
+    if (!Number.isFinite(amountNumber) || amountNumber <= 0) {
+      return NextResponse.json(
+        { error: "amount must be a positive number" },
+        { status: 400 },
+      );
+    }
+    const parsedDate = new Date(date);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return NextResponse.json({ error: "date is invalid" }, { status: 400 });
+    }
+    const allowedSources = ["cash", "card", "pooled"];
+    if (!allowedSources.includes(source)) {
+      return NextResponse.json(
+        { error: `source must be one of: ${allowedSources.join(", ")}` },
+        { status: 400 },
+      );
+    }
+
+    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+    if (!staff) {
+      return NextResponse.json({ error: "Staff member not found" }, { status: 404 });
+    }
+
     const tip = await prisma.tipDistribution.create({
       data: {
         staffId,
-        amount,
+        amount: amountNumber,
         source,
-        date: new Date(date),
+        date: parsedDate,
       },
       include: { staff: true },
     });
