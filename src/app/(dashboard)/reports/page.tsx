@@ -31,6 +31,7 @@ export default function ReportsPage() {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState("today");
+  const [selectedItem, setSelectedItem] = useState<{ name: string; quantity: number; revenue: number } | null>(null);
 
   useEffect(() => { fetchReport(); }, [dateRange]);
 
@@ -197,7 +198,11 @@ export default function ReportsPage() {
                       </TableHeader>
                       <TableBody>
                         {reportData?.topItems.map((item, i) => (
-                          <TableRow key={i}>
+                          <TableRow
+                            key={i}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => setSelectedItem(item)}
+                          >
                             <TableCell>#{i + 1}</TableCell>
                             <TableCell className="font-medium">{item.name}</TableCell>
                             <TableCell>{item.quantity}</TableCell>
@@ -250,6 +255,53 @@ export default function ReportsPage() {
           </>
         )}
       </div>
+
+      {/* Drill-down for a computed row. Report rows are derived analytics, so
+          there is nothing to edit or delete — the popup shows the breakdown
+          behind the figure instead. */}
+      <Dialog open={!!selectedItem} onOpenChange={(open) => { if (!open) setSelectedItem(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Item detail</DialogTitle>
+            <DialogDescription>{selectedItem?.name}</DialogDescription>
+          </DialogHeader>
+          {selectedItem && (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Item</span>
+                <span className="font-medium">{selectedItem.name}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Units sold</span>
+                <span>{selectedItem.quantity}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Revenue</span>
+                <span className="font-bold">{formatCurrency(selectedItem.revenue)}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Average price per unit</span>
+                <span>{selectedItem.quantity > 0 ? formatCurrency(selectedItem.revenue / selectedItem.quantity) : "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Share of top-item revenue</span>
+                <span>
+                  {(() => {
+                    const total = (reportData?.topItems ?? []).reduce((sum, it) => sum + it.revenue, 0);
+                    return total > 0 ? ((selectedItem.revenue / total) * 100).toFixed(1) + "%" : "—";
+                  })()}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground pt-2 border-t">
+                Computed from recorded orders for {dateRange}. Nothing here is editable.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedItem(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
