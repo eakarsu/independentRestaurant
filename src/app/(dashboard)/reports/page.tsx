@@ -298,8 +298,13 @@ export default function ReportsPage() {
               </p>
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSelectedItem(null)}>Close</Button>
+          {/* Same three actions as every other row popup. These rows are
+              computed figures, so edit and delete are disabled with the
+              reason shown rather than hidden. */}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSelectedItem(null)}>Cancel</Button>
+            <Button variant="destructive" disabled title="Computed figures cannot be deleted">Delete</Button>
+            <Button disabled title="Computed figures cannot be edited">Edit</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
