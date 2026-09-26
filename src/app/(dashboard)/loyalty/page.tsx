@@ -312,6 +312,7 @@ export default function LoyaltyPage() {
                     <Input
                       type="number"
                       placeholder="Points to add"
+                      id="loyalty-points-input"
                       value={pointsToAdd}
                       onChange={(e) => setPointsToAdd(e.target.value)}
                     />
@@ -325,8 +326,13 @@ export default function LoyaltyPage() {
                   </div>
                 </div>
 
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
+                {/* Same three actions as every other row popup. The points
+                    ledger is append-only, so Delete is disabled with the
+                    reason shown; Edit focuses the adjustment field above. */}
+                <DialogFooter className="gap-2">
+                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
+                  <Button variant="destructive" disabled title="Points are redeemed or expired, never deleted">Delete</Button>
+                  <Button onClick={() => document.getElementById("loyalty-points-input")?.focus()}>Edit</Button>
                 </DialogFooter>
               </>
             )}
