@@ -37,6 +37,8 @@ export default function TipsPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedTip, setSelectedTip] = useState<TipRecord | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
 
   const [form, setForm] = useState({
@@ -69,6 +71,29 @@ export default function TipsPage() {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this tip record? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/tips/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast({ title: "Deleted", description: "Tip record removed" });
+      fetchData();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete tip", variant: "destructive" });
+    }
+  };
+
+  const startEdit = (tip: TipRecord) => {
+    setEditingId(tip.id);
+    setForm({
+      staffId: tip.staffId,
+      amount: String(tip.amount),
+      source: tip.source,
+      date: new Date(tip.date).toISOString().split("T")[0],
+    });
+    setIsDialogOpen(true);
+  };
+
   const handleSubmit = async () => {
     if (!form.staffId || !form.amount) {
       toast({ title: "Error", description: "Please fill all fields", variant: "destructive" });
@@ -76,8 +101,8 @@ export default function TipsPage() {
     }
 
     try {
-      const res = await fetch("/api/tips", {
-        method: "POST",
+      const res = await fetch(editingId ? `/api/tips/${editingId}` : "/api/tips", {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           staffId: form.staffId,
@@ -88,8 +113,9 @@ export default function TipsPage() {
       });
 
       if (res.ok) {
-        toast({ title: "Success", description: "Tip recorded" });
+        toast({ title: "Success", description: editingId ? "Tip updated" : "Tip recorded" });
         setIsDialogOpen(false);
+        setEditingId(null);
         setForm({ staffId: "", amount: "", source: "card", date: new Date().toISOString().split("T")[0] });
         fetchData();
       }
@@ -271,7 +297,111 @@ export default function TipsPage() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Individual records, each with its own actions. The aggregate table
+            above has no per-row handlers, so edits and deletes had nowhere to
+            happen. */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Tip Records</CardTitle>
+            <CardDescription>Every recorded tip, with edit and delete</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Staff Member</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tips.map((t) => (
+                  <TableRow
+                    key={t.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => setSelectedTip(t)}
+                  >
+                    <TableCell>{new Date(t.date).toLocaleDateString()}</TableCell>
+                    <TableCell className="font-medium">{t.staff?.firstName} {t.staff?.lastName}</TableCell>
+                    <TableCell><Badge variant="outline">{t.source}</Badge></TableCell>
+                    <TableCell className="font-bold text-green-600">{formatCurrency(t.amount)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); startEdit(t); }}>Edit</Button>
+                        <Button size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}>Delete</Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {tips.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      No tip records
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Full detail for the selected record, with its actions. */}
+      <Dialog open={!!selectedTip} onOpenChange={(open) => { if (!open) setSelectedTip(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Tip record detail</DialogTitle>
+            <DialogDescription>
+              {selectedTip ? new Date(selectedTip.date).toLocaleDateString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTip && (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Staff member</span>
+                <span className="font-medium">{selectedTip.staff?.firstName} {selectedTip.staff?.lastName}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Position</span>
+                <span>{selectedTip.staff?.position ?? "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Amount</span>
+                <span className="font-bold text-green-600">{formatCurrency(selectedTip.amount)}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Source</span>
+                <Badge variant="outline">{selectedTip.source}</Badge>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Date</span>
+                <span>{new Date(selectedTip.date).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Record id</span>
+                <span className="font-mono text-xs">{selectedTip.id}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSelectedTip(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => { const id = selectedTip?.id; setSelectedTip(null); if (id) handleDelete(id); }}
+            >
+              Delete
+            </Button>
+            <Button
+              onClick={() => { const tip = selectedTip; setSelectedTip(null); if (tip) startEdit(tip); }}
+            >
+              Edit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
