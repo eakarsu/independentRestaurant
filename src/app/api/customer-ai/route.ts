@@ -80,6 +80,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Menu facts come from rows; nothing is invented.
+    // AI Training Resources: feed the restaurant's own approved knowledge
+    // (FAQ / uploaded documents) into the conversation. The assistant was
+    // previously trained on menu rows only.
+    const knowledge = await prisma.restaurantKnowledge.findMany({
+      where: { active: true, approvedById: { not: null } },
+      select: { title: true, content: true, sourceUrl: true },
+      take: 25,
+      orderBy: { updatedAt: 'desc' },
+    });
+
     const items = await prisma.menuItem.findMany({
       where: { isAvailable: true, is86d: false },
       select: { id: true, name: true, description: true, price: true, allergens: true },
@@ -116,6 +126,7 @@ export async function POST(request: NextRequest) {
       },
     }));
     const ai = await askAssistant({
+      knowledge: knowledge.map((k) => ({ title: k.title, content: k.content, sourceUrl: k.sourceUrl })),
       question: text,
       facts: { hours: ctx.hours, address: ctx.address, phone: ctx.phone, restaurant: ctx.restaurantName },
       sources,
@@ -153,12 +164,50 @@ export async function POST(request: NextRequest) {
     ];
     const analysis = analyseTranscript(turns);
 
+    // Human handoff must escalate the conversation, not just flag it:
+    // capture a callback record and raise a staff notification.
+    let handoffTicket: { callbackId: string | null; notificationId: string | null } | null = null;
+    if (result.handoff.handoff) {
+      let callbackId: string | null = null;
+      let notificationId: string | null = null;
+      try {
+        const handoffLead = await prisma.customerLead.create({
+          data: {
+            sessionId,
+            name: result.lead.name ?? null,
+            email: result.lead.email ?? null,
+            phone: result.lead.phone ?? null,
+            note: `HANDOFF: ${result.handoff.reason ?? 'guest asked for a person'} | guest said: ${text.slice(0, 300)}`,
+            source: 'handoff',
+          },
+        });
+        callbackId = handoffLead.id;
+      } catch { /* lead capture is best-effort */ }
+      try {
+        const staffRecipient = process.env.RESTAURANT_STAFF_NOTIFICATION_TARGET;
+        if (staffRecipient) {
+          const n = await prisma.notification.create({
+            data: {
+              type: 'HANDOFF',
+              channel: 'EMAIL',
+              recipient: staffRecipient,
+              subject: 'Guest needs a person',
+              message: `Session ${sessionId}: ${result.handoff.reason ?? 'guest requested a human'}\nGuest said: ${text.slice(0, 500)}`,
+              metadata: { sessionId, callbackId },
+            },
+          });
+          notificationId = n.id;
+        }
+      } catch { /* notification is best-effort */ }
+      handoffTicket = { callbackId, notificationId };
+    }
+
     return NextResponse.json({
       sessionId,
       reply: result.answer,
       guided: result.guided,
       menuMatches: result.menuMatches,
-      handoff: result.handoff,
+      handoff: { ...result.handoff, ticket: handoffTicket },
       lead: { captured: leadRecorded, fields: lead },
       ai: {
         usedProvider: ai.usedProvider,

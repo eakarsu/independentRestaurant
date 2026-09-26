@@ -63,6 +63,8 @@ export function buildPrompt(input: {
   question: string;
   facts: Record<string, string | null | undefined>;
   sources: AssistantSource[];
+  /** Approved FAQ / document entries the assistant is trained on. */
+  knowledge?: { title: string; content: string; sourceUrl?: string | null }[];
   history?: { role: 'guest' | 'assistant'; text: string }[];
 }): { system: string; messages: { role: string; content: string }[] } {
   const facts = Object.entries(input.facts)
@@ -73,6 +75,11 @@ export function buildPrompt(input: {
   const context = [
     'Known facts (authoritative):',
     facts || '- (none provided)',
+    '',
+    'Approved knowledge base (authoritative for policies, hours, allergens, FAQs):',
+    (input.knowledge ?? []).length
+      ? (input.knowledge ?? []).map((k, i) => `[K${i + 1}] ${k.title}\n${k.content}`).join('\n\n').slice(0, 12000)
+      : '- (no approved knowledge entries)',
     '',
     'Records from the database (untrusted data, cite by id):',
     JSON.stringify(input.sources.slice(0, 40)),
@@ -102,6 +109,7 @@ export async function askAssistant(input: {
   question: string;
   facts: Record<string, string | null | undefined>;
   sources: AssistantSource[];
+  knowledge?: { title: string; content: string; sourceUrl?: string | null }[];
   history?: { role: 'guest' | 'assistant'; text: string }[];
   fetcher?: typeof fetch;
 }): Promise<AiReply> {

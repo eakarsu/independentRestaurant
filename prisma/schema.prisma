@@ -1033,6 +1033,8 @@ enum NotificationType {
   PROMOTION
   FEEDBACK_REQUEST
   CUSTOM
+  HANDOFF
+
 }
 
 enum NotificationChannel {
