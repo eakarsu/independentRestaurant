@@ -12,9 +12,10 @@ FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 # Prisma ships a native schema engine that links against OpenSSL. Alpine does
-# not include it, so  fails with "Please manually
-# install OpenSSL" and the app never starts.
-RUN apk add --no-cache openssl \n    && addgroup -S app && adduser -S app -G app
+# not include it, so migrations fail with "Please manually install OpenSSL"
+# and the app never starts.
+RUN apk add --no-cache openssl \
+    && addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/.next ./.next
