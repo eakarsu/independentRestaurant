@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -95,6 +97,8 @@ export default function PerformancePage() {
   const [loading, setLoading] = useState(true);
   const [selectedStaff, setSelectedStaff] = useState<StaffSummary | null>(null);
   const [showAddRecord, setShowAddRecord] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<PerformanceRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<PerformanceRecord | null>(null);
   const [timePeriod, setTimePeriod] = useState("30");
 
   const [newRecord, setNewRecord] = useState({
@@ -161,6 +165,23 @@ export default function PerformancePage() {
   const totalSales = summaries.reduce((sum, s) => sum + s.totalSales, 0);
   const totalOrders = summaries.reduce((sum, s) => sum + s.totalOrders, 0);
   const totalHours = summaries.reduce((sum, s) => sum + s.totalHours, 0);
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!confirm("Delete this performance review? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/performance/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast({ title: "Deleted", description: "Performance review removed" });
+      fetchData();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete review", variant: "destructive" });
+    }
+  };
+
+  const startEditRecord = (record: PerformanceRecord) => {
+    setEditingRecord(record);
+    setShowAddRecord(true);
+  };
 
   if (loading) {
     return (
@@ -375,18 +396,23 @@ export default function PerformancePage() {
                     <TableHead>Metric</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead>Notes</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {records.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
                         No performance reviews recorded yet
                       </TableCell>
                     </TableRow>
                   ) : (
                     records.slice(0, 20).map((record) => (
-                      <TableRow key={record.id}>
+                      <TableRow
+                        key={record.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setSelectedRecord(record)}
+                      >
                         <TableCell>
                           {new Date(record.date).toLocaleDateString()}
                         </TableCell>
@@ -406,6 +432,12 @@ export default function PerformancePage() {
                         </TableCell>
                         <TableCell className="max-w-xs truncate">
                           {record.notes || "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); startEditRecord(record); }}>Edit</Button>
+                            <Button size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id); }}>Delete</Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -586,6 +618,47 @@ export default function PerformancePage() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Full detail for the selected review, with its actions. */}
+      <Dialog open={!!selectedRecord} onOpenChange={(open) => { if (!open) setSelectedRecord(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Performance review detail</DialogTitle>
+            <DialogDescription>
+              {selectedRecord ? new Date(selectedRecord.date).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedRecord && (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Employee</span>
+                <span className="font-medium">{selectedRecord.staff.firstName} {selectedRecord.staff.lastName}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Metric</span>
+                <span>{performanceMetrics.find((m) => m.value === selectedRecord.metric)?.label || selectedRecord.metric}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Score</span>
+                <span className="font-bold">{selectedRecord.value}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Notes</span>
+                <span className="text-right max-w-[60%]">{selectedRecord.notes || "—"}</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Record id</span>
+                <span className="font-mono text-xs">{selectedRecord.id}</span>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSelectedRecord(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => { const id = selectedRecord?.id; setSelectedRecord(null); if (id) handleDeleteRecord(id); }}>Delete</Button>
+            <Button onClick={() => { const r = selectedRecord; setSelectedRecord(null); if (r) startEditRecord(r); }}>Edit</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
