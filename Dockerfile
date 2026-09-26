@@ -21,6 +21,9 @@ COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/.next ./.next
 COPY --from=build --chown=app:app /app/public ./public
 COPY --from=build --chown=app:app /app/prisma ./prisma
+# npm start runs scripts/validate-runtime.mjs before next start; without this
+# the container exits with MODULE_NOT_FOUND.
+COPY --from=build --chown=app:app /app/scripts ./scripts
 # `npm start` runs the standalone server, which expects its static assets and
 # public files inside the standalone directory. Next does not copy them there
 # itself, so the image would boot and serve HTML with no CSS or JS.
