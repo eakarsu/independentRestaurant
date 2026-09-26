@@ -33,6 +33,14 @@ import {
 } from "@/lib/customer/channels";
 import prisma from "@/lib/prisma";
 import { buildAction, integrationsSummary } from "@/lib/customer/integrations";
+import {
+  accrueCommission,
+  buildContext,
+  createSurvey,
+  efficiencyScore,
+  planCampaign,
+  tallySurvey,
+} from "@/lib/customer/campaigns";
 import { answerDietary, captureEventEnquiry, describeDish, planBooking } from "@/lib/customer/host";
 
 export async function GET() {
@@ -55,6 +63,12 @@ export async function GET() {
       "dietary",
       "booking",
       "private-event",
+      "survey-create",
+      "survey-tally",
+      "campaign-plan",
+      "dynamic-context",
+      "efficiency-score",
+      "partner-commission",
       "whatsapp-ai",
       "instagram-ai",
       "phone-receptionist",
@@ -178,6 +192,27 @@ export async function POST(request: NextRequest) {
           const row = await prisma.reservation.create({ data: { customerName: String(b.customerName ?? "Guest"), customerPhone: String(b.customerPhone ?? ""), customerEmail: b.customerEmail ?? null, partySize: Number(b.partySize ?? 1), date: new Date(String(b.date)), time: String(b.time ?? ""), status: "PENDING" } });
           return NextResponse.json({ ...plan, created: true, reservationId: row.id }, { status: 201 });
         } catch (e: any) { return NextResponse.json({ ...plan, created: false, error: e?.message }, { status: 503 }); }
+      }
+      /* ---- survey, campaign, context, efficiency, partners ---- */
+      case "survey-create": {
+        return NextResponse.json(createSurvey({ id: String(body.id ?? 'survey'), title: String(body.title ?? ''), description: body.description, questions: body.questions ?? [] }), { status: 201 });
+      }
+      case "survey-tally": {
+        const def = createSurvey({ id: String(body.id ?? 'survey'), title: String(body.title ?? 'Survey'), questions: body.questions ?? [] });
+        return NextResponse.json({ tallies: tallySurvey(def, body.responses ?? []) });
+      }
+      case "campaign-plan": {
+        const plan = planCampaign({ id: String(body.id ?? 'campaign'), goal: body.goal, audienceRule: String(body.audienceRule ?? ''), budgetCents: body.budgetCents ?? null });
+        return NextResponse.json(plan, { status: 201 });
+      }
+      case "dynamic-context": {
+        return NextResponse.json(buildContext(body.sections ?? []));
+      }
+      case "efficiency-score": {
+        return NextResponse.json(efficiencyScore(body.inputs ?? {}));
+      }
+      case "partner-commission": {
+        return NextResponse.json(accrueCommission(body.referrals ?? [], { ratePct: Number(body.ratePct ?? 20), months: body.months }));
       }
       case "private-event": {
         const r = captureEventEnquiry(body.enquiry ?? body);
