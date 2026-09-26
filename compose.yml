@@ -36,6 +36,16 @@ services:
       FULFILLMENT_PROVIDER_URL: ${FULFILLMENT_PROVIDER_URL:-}
       FULFILLMENT_PROVIDER_TOKEN: ${FULFILLMENT_PROVIDER_TOKEN:-}
       INTERNAL_WORKER_SECRET: ${INTERNAL_WORKER_SECRET:?INTERNAL_WORKER_SECRET is required}
+      # Customer-facing assistant. Without these the assistant falls back to
+      # deterministic answers and reports that no provider was used.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      # Facts the assistant answers from, and where handoffs are sent.
+      RESTAURANT_NAME: ${RESTAURANT_NAME:-}
+      RESTAURANT_HOURS: ${RESTAURANT_HOURS:-}
+      RESTAURANT_ADDRESS: ${RESTAURANT_ADDRESS:-}
+      RESTAURANT_PHONE: ${RESTAURANT_PHONE:-}
+      RESTAURANT_STAFF_NOTIFICATION_TARGET: ${RESTAURANT_STAFF_NOTIFICATION_TARGET:-}
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
