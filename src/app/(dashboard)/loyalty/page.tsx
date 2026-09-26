@@ -66,6 +66,39 @@ export default function LoyaltyPage() {
     }
   };
 
+  /**
+   * Redeem points. The loyalty ledger is append-only, so there is no delete:
+   * a redemption is a negative adjustment, and the API rejects it if the
+   * balance is insufficient.
+   */
+  const handleRedeemPoints = async () => {
+    if (!selectedCustomer || !pointsToAdd) return;
+    const amount = Math.abs(parseInt(pointsToAdd));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    try {
+      const signature = `${selectedCustomer.id}:redeem:${amount}`;
+      if (requestKey.current?.body !== signature) requestKey.current = { body: signature, key: crypto.randomUUID() };
+      const response = await fetch(`/api/customers/${selectedCustomer.id}/loyalty`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey.current!.key },
+        body: JSON.stringify({
+          points: -amount,
+          type: "redeemed",
+          description: `Manual redemption of ${amount} points`,
+        }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || "Redemption failed");
+      requestKey.current = null;
+      toast({ title: "Success", description: `Redeemed ${amount} points` });
+      setPointsToAdd("");
+      fetchCustomers();
+      setIsDetailOpen(false);
+    } catch (e) {
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Failed to redeem points", variant: "destructive" });
+    }
+  };
+
   const handleAddPoints = async () => {
     if (!selectedCustomer || !pointsToAdd) return;
 
@@ -283,6 +316,7 @@ export default function LoyaltyPage() {
                       onChange={(e) => setPointsToAdd(e.target.value)}
                     />
                     <Button onClick={handleAddPoints}>Add Points</Button>
+                    <Button variant="outline" onClick={handleRedeemPoints}>Redeem</Button>
                   </div>
 
                   <div className="p-4 bg-muted/50 rounded-lg">
