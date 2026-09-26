@@ -1266,3 +1266,21 @@ model RestaurantKnowledge {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// ---- Customer-facing assistant (AmeritAI parity) --------------------------
+// Leads captured from the assistant conversation. Only populated when the
+// customer actually typed contact details.
+model CustomerLead {
+  id          String   @id @default(cuid())
+  sessionId   String
+  name        String?
+  email       String?
+  phone       String?
+  partySize   Int?
+  preferredAt DateTime?
+  note        String?
+  source      String   @default("assistant")
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+}
