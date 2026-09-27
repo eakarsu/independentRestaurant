@@ -56,6 +56,7 @@ export default function SchedulingPage() {
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [currentWeek, setCurrentWeek] = useState(getWeekStart(new Date()));
+  const [selectedShift, setSelectedShift] = useState<Schedule | null>(null);
 
   const [form, setForm] = useState({
     staffId: "",
@@ -328,7 +329,8 @@ export default function SchedulingPage() {
                     {shifts.map((shift) => (
                       <div
                         key={shift.id}
-                        className={`p-2 rounded text-xs ${getPositionColor(shift.position)} group relative`}
+                        className={`p-2 rounded text-xs ${getPositionColor(shift.position)} group relative cursor-pointer hover:shadow-md`}
+                        onClick={() => setSelectedShift(shift)}
                       >
                         <div className="font-medium truncate">
                           {shift.staff.firstName} {shift.staff.lastName[0]}.
@@ -344,7 +346,10 @@ export default function SchedulingPage() {
                           variant="ghost"
                           size="icon"
                           className="h-5 w-5 absolute top-1 right-1 opacity-0 group-hover:opacity-100"
-                          onClick={() => handleDelete(shift.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(shift.id);
+                          }}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -386,6 +391,71 @@ export default function SchedulingPage() {
             </div>
           </CardContent>
         </Card>
+
+        {selectedShift && (
+          <Dialog open onOpenChange={(open) => { if (!open) setSelectedShift(null); }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {selectedShift.staff.firstName} {selectedShift.staff.lastName}
+                </DialogTitle>
+                <DialogDescription>
+                  {new Date(selectedShift.date).toLocaleDateString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Position</span>
+                  <Badge variant="outline">{selectedShift.position}</Badge>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Shift</span>
+                  <span>
+                    {formatTime(selectedShift.startTime)} – {formatTime(selectedShift.endTime)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Duration</span>
+                  <span>
+                    {(
+                      (new Date(selectedShift.endTime).getTime() - new Date(selectedShift.startTime).getTime()) /
+                      3600000
+                    ).toFixed(1)} hours
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Contact</span>
+                  <span>{selectedShift.staff.user.email}</span>
+                </div>
+                {selectedShift.notes && (
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground">Notes</span>
+                    <p>{selectedShift.notes}</p>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    const id = selectedShift.id;
+                    setSelectedShift(null);
+                    handleDelete(id);
+                  }}
+                >
+                  Delete shift
+                </Button>
+                <Button variant="outline" onClick={() => setSelectedShift(null)}>
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
     </div>
   );
