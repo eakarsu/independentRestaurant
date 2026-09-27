@@ -23,7 +23,12 @@ export async function GET(request: NextRequest) {
     : provisioned ? process.env.PROVISION_ADMIN_PASSWORD : process.env.ADMIN_PASSWORD
   const origin = request.headers.get('origin')
   const host = request.headers.get('host')
-  const requestOrigin = host ? `${request.nextUrl.protocol}//${host}` : request.nextUrl.origin
+  // Behind nginx the request arrives over http even though the browser used
+  // https, so the forwarded protocol has to be honoured or the same-origin
+  // comparison rejects every real request.
+  const forwardedProto = (request.headers.get('x-forwarded-proto') || '').split(',')[0].trim()
+  const proto = forwardedProto || request.nextUrl.protocol.replace(':', '')
+  const requestOrigin = host ? `${proto}://${host}` : request.nextUrl.origin
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(request.nextUrl.hostname)
   const enabled = process.env.ENABLE_DEMO_CREDENTIAL_AUTOFILL === 'true'
     // Production must additionally opt in per host, and only demo credentials
