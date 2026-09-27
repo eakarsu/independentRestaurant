@@ -76,7 +76,17 @@ async function seed(tx, admin, accountPassword) {
     await insert(tx,'orderItem',key('restaurant-delivery-line',i),{orderId:deliveryOrderId,menuItemId:itemId,quantity:1,unitPrice:price,totalPrice:price,status:'PREPARING'});
     await insert(tx,'deliveryInfo',key('restaurant-delivery-detail',i),{orderId:deliveryOrderId,address:`DEMO: ${200+i} Example Lane`,city:'Demo City',state:'GA',zipCode:'30301'});
     const loyaltyId=key('restaurant-loyalty',i);
-    await insert(tx,'loyaltyPoints',loyaltyId,{customerId});
+    // Give each demo customer a loyalty history. Previously only customerId
+    // was set, so every account sat at 0 points / BRONZE and the loyalty
+    // screen looked empty. Tiers follow the app's own thresholds
+    // (500 SILVER, 1500 GOLD, 5000 PLATINUM).
+    const lifetimePoints = 250 + i * 420;
+    await insert(tx,'loyaltyPoints',loyaltyId,{
+      customerId,
+      lifetimePoints,
+      points: Math.floor(lifetimePoints / 3),
+      tier: lifetimePoints >= 5000 ? 'PLATINUM' : lifetimePoints >= 1500 ? 'GOLD' : lifetimePoints >= 500 ? 'SILVER' : 'BRONZE',
+    });
     await insert(tx,'feedback',key('restaurant-feedback',i),{customerId,source:'demo',rating:4,comment:'Demo feedback for reviewing the customer service screen.'});
     await insert(tx,'promotion',key('restaurant-promo',i),{name:`Demo offer ${i+1}`,description:demoNote,code:`DEMO-OFFER-${i+1}`,type:'PERCENTAGE',value:10,startDate:stamp(),endDate:stamp(30),isActive:false,applicableTo:[],dayOfWeek:[]});
     await insert(tx,'notificationTemplate',key('restaurant-template',i),{name:`Demo message template ${i+1}`,type:'CUSTOM',channel:'EMAIL',subject:'Demo customer message',content:demoNote,isActive:false});
