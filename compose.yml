@@ -46,6 +46,14 @@ services:
       RESTAURANT_ADDRESS: ${RESTAURANT_ADDRESS:-}
       RESTAURANT_PHONE: ${RESTAURANT_PHONE:-}
       RESTAURANT_STAFF_NOTIFICATION_TARGET: ${RESTAURANT_STAFF_NOTIFICATION_TARGET:-}
+      # Optional demo login autofill. Only hosts listed in DEMO_AUTOFILL_HOSTS
+      # are served, and only the DEMO_* credentials are returned there.
+      ENABLE_DEMO_CREDENTIAL_AUTOFILL: ${ENABLE_DEMO_CREDENTIAL_AUTOFILL:-false}
+      DEMO_AUTOFILL_HOSTS: ${DEMO_AUTOFILL_HOSTS:-}
+      DEMO_ADMIN_EMAIL: ${DEMO_ADMIN_EMAIL:-}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
+      DEMO_EMAIL: ${DEMO_EMAIL:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
