@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ChefHat, Clock, Users, Plus, Search, Play, Utensils } from "lucide-react";
+import { fetchCollection } from "@/lib/fetchCollection";
 
 interface Recipe {
   id: string;
@@ -73,13 +74,13 @@ export default function RecipesPage() {
 
   const fetchData = async () => {
     try {
-      const [recipesRes, menuRes] = await Promise.all([
+      const [recipesRes, menuData] = await Promise.all([
         fetch("/api/recipes"),
-        fetch("/api/menu/items"),
+        fetchCollection<MenuItem>("/api/menu/items"),
       ]);
-      const [recipesData, menuData] = await Promise.all([recipesRes.json(), menuRes.json()]);
+      const recipesData = await recipesRes.json();
       setRecipes(Array.isArray(recipesData) ? recipesData : []);
-      setMenuItems(Array.isArray(menuData) ? menuData : []);
+      setMenuItems(menuData);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {

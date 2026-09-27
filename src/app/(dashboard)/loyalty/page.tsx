@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/components/ui/use-toast";
 import { Gift, Star, TrendingUp, Users, Crown, Search } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { fetchCollection } from "@/lib/fetchCollection";
 
 interface Customer {
   id: string;
@@ -56,9 +57,8 @@ export default function LoyaltyPage() {
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch("/api/customers");
-      const data = await res.json();
-      setCustomers(Array.isArray(data) ? data : []);
+      const data = await fetchCollection<Customer>("/api/customers");
+      setCustomers(data);
     } catch {
       toast({ title: "Error", description: "Failed to load customers", variant: "destructive" });
     } finally {
