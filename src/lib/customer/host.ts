@@ -99,6 +99,13 @@ const ALLERGEN_CODE_MAP: Record<string, string[]> = {
   sesame: ['sesame'],
 };
 
+/** Animal words used to keep vegan answers away from meat dishes. */
+const NON_VEGAN_WORDS = [
+  'beef', 'steak', 'chicken', 'pork', 'bacon', 'ham', 'sausage', 'lamb',
+  'turkey', 'duck', 'meat', 'pepperoni', 'salami', 'fish', 'salmon', 'tuna',
+  'shrimp', 'prawn', 'crab', 'lobster', 'anchovy', 'gelatin', 'honey',
+];
+
 export function answerDietary(question: string, menu: MenuItemFact[]): DietaryAnswer {
   const q = question.toLowerCase();
   const isVegan = /vegan/.test(q);
@@ -113,6 +120,8 @@ export function answerDietary(question: string, menu: MenuItemFact[]): DietaryAn
     .filter((m) => m.isAvailable && !m.is86d)
     .filter((m) => {
       const codes = (m.allergens ?? []).map((a) => a.toLowerCase());
+      const haystack = `${m.name} ${m.description ?? ''}`.toLowerCase();
+      if (isVegan && NON_VEGAN_WORDS.some((word) => haystack.includes(word))) return false;
       if (avoid.length) return !codes.some((c) => avoid.includes(c));
       // Allergen question: list dishes that do NOT contain the named allergen.
       for (const [code, words] of Object.entries(ALLERGEN_CODE_MAP)) {
@@ -128,15 +137,15 @@ export function answerDietary(question: string, menu: MenuItemFact[]): DietaryAn
   return {
     question: kind,
     matches,
-    requiresHumanConfirmation: isAllergen || kind === 'other',
+    requiresHumanConfirmation: isAllergen || isVegan || isGluten || kind === 'other',
     answer: matches.length
-      ? `Based on our recorded allergen codes, ${matches.length} dish(es) avoid what you asked about: ${matches.map((m) => m.name).join(', ')}.`
+      ? `Based on recorded allergen codes and dish names, ${matches.length} dish(es) avoid what you asked about: ${matches.map((m) => m.name).join(', ')}.`
       : 'I could not find a dish that clearly avoids that based on our recorded allergen codes.',
     safetyNotice:
       isAllergen
         ? 'Allergen information is recorded per dish but is not a guarantee. Please confirm with a team member before ordering — they will check with the kitchen.'
         : isVegan || isGluten
-          ? 'This is based on recorded allergen codes only. Please tell your server about any allergy.'
+          ? 'This is based on recorded allergen codes and dish names only, not a full ingredient list. Please confirm with a team member before ordering.'
           : null,
   };
 }
@@ -181,7 +190,7 @@ export function planBooking(req: Partial<BookingRequest>): BookingResult {
     reservationId: null,
     confirmationMessage: missing.length
       ? `To book I still need: ${missing.join(', ')}.`
-      : `Booked${party} on ${when}. We'll confirm shortly — see you then!`,
+      : `Request received${party} on ${when}. The team will confirm it shortly — see you then!`,
     staffNotification: {
       subject: `Reservation request${party} — ${when}`,
       body:

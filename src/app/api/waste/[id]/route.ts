@@ -1,5 +1,6 @@
 import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
+import { WASTE_REASONS } from "@/lib/operations/waste";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -10,14 +11,6 @@ import { prisma } from "@/lib/prisma";
  * would leave inventory permanently wrong, so every change here reverses the
  * stock effect as well, inside one transaction.
  */
-const WASTE_REASONS = [
-  "Expired",
-  "Spoiled",
-  "Overproduction",
-  "Customer Return",
-  "Preparation Error",
-];
-
 type Params = { params: Promise<{ id: string }> };
 
 async function handlePATCH(request: NextRequest, { params }: Params) {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,7 +89,7 @@ interface WaitlistEntry {
   createdAt: string;
 }
 
-export default function ReservationsPage() {
+function ReservationsPageContent() {
   const mutationFetch = useMutationFetch();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [tables, setTables] = useState<TableData[]>([]);
@@ -153,6 +154,20 @@ export default function ReservationsPage() {
   useEffect(() => {
     fetchData();
   }, [selectedDate]);
+
+  // Deep link from search: /reservations?reservationId=...
+  const searchParams = useSearchParams();
+  const deepLinkReservationId = searchParams.get("reservationId");
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+
+  useEffect(() => {
+    if (!deepLinkReservationId || deepLinkHandled || loading) return;
+    const reservation = reservations.find((r) => r.id === deepLinkReservationId);
+    if (reservation) {
+      openReservationDetail(reservation);
+      setDeepLinkHandled(true);
+    }
+  }, [deepLinkReservationId, reservations, loading, deepLinkHandled]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -1231,5 +1246,13 @@ export default function ReservationsPage() {
         </Dialog>
       </div>
     </div>
+  );
+}
+
+export default function ReservationsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ReservationsPageContent />
+    </Suspense>
   );
 }

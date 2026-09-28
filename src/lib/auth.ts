@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "./prisma";
 import bcrypt from "bcryptjs";
+import { authLimiter } from "./rate-limit";
 
 export const authOptions: NextAuthOptions = {
   cookies: {
@@ -18,6 +19,13 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
+
+        // Throttle credential guessing per account. The in-process limiter is
+        // a hardening layer, not a substitute for edge/DB rate limiting.
+        const attempt = authLimiter(`login:${credentials.email.toLowerCase()}`);
+        if (!attempt.success) {
           return null;
         }
 

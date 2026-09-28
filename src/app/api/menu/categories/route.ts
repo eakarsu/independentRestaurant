@@ -9,6 +9,20 @@ async function handleGET() {
       include: {
         items: {
           orderBy: { name: "asc" },
+          include: {
+            modifierGroups: {
+              include: {
+                modifierGroup: {
+                  include: {
+                    modifiers: {
+                      where: { isAvailable: true },
+                      orderBy: { name: "asc" },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     });

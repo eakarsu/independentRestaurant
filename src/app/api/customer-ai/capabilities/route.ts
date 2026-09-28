@@ -9,6 +9,10 @@
  * no image is described, without the provider.
  */
 import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { getClientIp } from "@/lib/api-helpers";
+import { customerAiLimiter } from "@/lib/rate-limit";
+import { queueStaffAlert } from "@/lib/operations/notifications";
 import {
   abandonRecovery,
   priceAlerts,
@@ -31,7 +35,6 @@ import {
   translate,
   visualDiagnosis,
 } from "@/lib/customer/channels";
-import prisma from "@/lib/prisma";
 import { buildAction, integrationsSummary } from "@/lib/customer/integrations";
 import {
   accrueCommission,
@@ -79,6 +82,13 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const ip = getClientIp(request);
+    if (!customerAiLimiter(ip).success) {
+      return NextResponse.json(
+        { error: "Too many assistant requests. Please try again shortly." },
+        { status: 429 },
+      );
+    }
     const body = await request.json().catch(() => ({}));
     const capability = String(body.capability ?? "");
 
@@ -187,11 +197,58 @@ export async function POST(request: NextRequest) {
       case "booking": {
         const plan = planBooking(body.booking ?? body);
         if (plan.missingFields.length) return NextResponse.json(plan, { status: 400 });
+        const b = body.booking ?? body;
+        const partySize = Number(b.partySize ?? 0);
+        const requestedDate = new Date(String(b.date));
+        if (!Number.isInteger(partySize) || partySize < 1 || partySize > 100)
+          return NextResponse.json(
+            { ...plan, created: false, error: "partySize must be between 1 and 100" },
+            { status: 400 },
+          );
+        if (Number.isNaN(requestedDate.getTime()) || requestedDate.getTime() < Date.now() - 86400000)
+          return NextResponse.json(
+            { ...plan, created: false, error: "date must be a valid future date" },
+            { status: 400 },
+          );
+        const preferredAt = new Date(`${String(b.date)}T${String(b.time ?? "00:00")}`);
+        const sessionId = String(b.sessionId ?? body.sessionId ?? "assistant")
+          .replace(/[^\w-]/g, "")
+          .slice(0, 100) || "assistant";
         try {
-          const b = body.booking ?? body;
-          const row = await prisma.reservation.create({ data: { customerName: String(b.customerName ?? "Guest"), customerPhone: String(b.customerPhone ?? ""), customerEmail: b.customerEmail ?? null, partySize: Number(b.partySize ?? 1), date: new Date(String(b.date)), time: String(b.time ?? ""), status: "PENDING" } });
-          return NextResponse.json({ ...plan, created: true, reservationId: row.id }, { status: 201 });
-        } catch (e: any) { return NextResponse.json({ ...plan, created: false, error: e?.message }, { status: 503 }); }
+          // Unauthenticated booking requests become staff-reviewed leads, not
+          // reservations: capacity, hours and table conflicts are only checked
+          // by the authenticated reservations workflow.
+          const lead = await prisma.customerLead.create({
+            data: {
+              sessionId,
+              name: String(b.customerName ?? "Guest").slice(0, 200),
+              email: b.customerEmail ? String(b.customerEmail).slice(0, 254) : null,
+              phone: String(b.customerPhone ?? "").slice(0, 40),
+              partySize,
+              preferredAt: Number.isNaN(preferredAt.getTime()) ? requestedDate : preferredAt,
+              note: `Booking request via assistant${b.note ? `: ${String(b.note).slice(0, 300)}` : ""}`,
+              source: "assistant-booking",
+            },
+          });
+          await queueStaffAlert({
+            subject: plan.staffNotification.subject,
+            message: plan.staffNotification.body,
+            metadata: { leadId: lead.id, sessionId },
+          }).catch(() => null);
+          return NextResponse.json(
+            {
+              ...plan,
+              created: false,
+              requested: true,
+              requestId: lead.id,
+              confirmationMessage:
+                "Thanks — your booking request is with the team. They will confirm it shortly.",
+            },
+            { status: 201 },
+          );
+        } catch (e: any) {
+          return NextResponse.json({ ...plan, created: false, error: e?.message }, { status: 503 });
+        }
       }
       /* ---- survey, campaign, context, efficiency, partners ---- */
       case "survey-create": {

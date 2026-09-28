@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "@/components/ui/use-toast";
 import { Trash2, Plus, TrendingDown, DollarSign, Package, AlertCircle } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { WASTE_REASONS } from "@/lib/operations/waste";
 
 interface Ingredient {
   id: string;
@@ -31,17 +32,6 @@ interface WasteRecord {
   createdAt: string;
   ingredient: Ingredient;
 }
-
-const WASTE_REASONS = [
-  "Expired",
-  "Spoiled",
-  "Overproduction",
-  "Customer Return",
-  "Preparation Error",
-  "Contamination",
-  "Equipment Failure",
-  "Other",
-];
 
 export default function WastePage() {
   const [records, setRecords] = useState<WasteRecord[]>([]);
@@ -115,10 +105,14 @@ export default function WastePage() {
     if (!ingredient) return;
 
     try {
-      const res = await fetch("/api/waste", {
-        method: "POST",
+      const res = await fetch(editingId ? `/api/waste/${editingId}` : "/api/waste", {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(editingId ? {
+          quantity: Number(form.quantity),
+          reason: form.reason,
+          cost: ingredient.cost * Number(form.quantity),
+        } : {
           ingredientId: form.ingredientId,
           quantity: parseFloat(form.quantity),
           reason: form.reason,
@@ -126,14 +120,22 @@ export default function WastePage() {
         }),
       });
 
-      if (res.ok) {
-        toast({ title: "Success", description: "Waste recorded" });
-        setIsDialogOpen(false);
-        setForm({ ingredientId: "", quantity: "", reason: "", notes: "" });
-        fetchData();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save waste record");
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to record waste", variant: "destructive" });
+
+      toast({ title: "Success", description: editingId ? "Waste updated" : "Waste recorded" });
+      setIsDialogOpen(false);
+      setEditingId(null);
+      setForm({ ingredientId: "", quantity: "", reason: "", notes: "" });
+      fetchData();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to save waste record",
+        variant: "destructive",
+      });
     }
   };
 
@@ -161,14 +163,14 @@ export default function WastePage() {
             <h2 className="text-2xl font-bold">Food Waste Tracking</h2>
             <p className="text-muted-foreground">Monitor and reduce food waste</p>
           </div>
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) setEditingId(null); }}>
             <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> Record Waste</Button>
+              <Button onClick={() => { setEditingId(null); setForm({ ingredientId: "", quantity: "", reason: "", notes: "" }); }}><Plus className="mr-2 h-4 w-4" /> Record Waste</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Record Food Waste</DialogTitle>
-                <DialogDescription>Log wasted ingredients for tracking</DialogDescription>
+                <DialogTitle>{editingId ? "Edit Food Waste" : "Record Food Waste"}</DialogTitle>
+                <DialogDescription>{editingId ? "Update this waste record" : "Log wasted ingredients for tracking"}</DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4">
@@ -225,7 +227,7 @@ export default function WastePage() {
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleSubmit}>Record</Button>
+                <Button onClick={handleSubmit}>{editingId ? "Save changes" : "Record"}</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

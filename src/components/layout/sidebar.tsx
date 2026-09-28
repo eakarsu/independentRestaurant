@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import {
   CalendarDays,
@@ -57,6 +58,10 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const userName = session?.user?.name || "Guest User";
+  const userEmail = session?.user?.email || "Not signed in";
+  const initial = userName.trim().charAt(0).toUpperCase() || "U";
 
   return (
     <div className="flex h-full w-64 flex-col border-r bg-background">
@@ -91,11 +96,11 @@ export function Sidebar() {
       <div className="border-t p-4">
         <div className="flex items-center gap-3 rounded-lg bg-muted px-3 py-2">
           <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
-            A
+            {initial}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">Admin User</p>
-            <p className="text-xs text-muted-foreground truncate">admin@restaurant.com</p>
+            <p className="text-sm font-medium truncate">{userName}</p>
+            <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
           </div>
         </div>
       </div>

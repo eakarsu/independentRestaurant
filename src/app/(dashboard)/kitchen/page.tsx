@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ interface Order {
 export default function KitchenDisplayPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const idempotencyKeys = useRef(new Map<string, string>());
 
   useEffect(() => {
     fetchOrders();
@@ -38,13 +39,18 @@ export default function KitchenDisplayPage() {
 
   const fetchOrders = async () => {
     try {
-      // /api/orders returns a paginated object ({ data, pagination }), not a bare
-      // array, and only honours a single status param — so fetch a wide page and
-      // filter to the active kitchen statuses client-side.
-      const res = await fetch("/api/orders?pageSize=200");
-      const json = await res.json();
-      const list: Order[] = Array.isArray(json) ? json : (json?.data ?? []);
-      setOrders(list.filter((o: Order) => ["CONFIRMED", "PREPARING"].includes(o.status)));
+      const [confirmedRes, preparingRes] = await Promise.all([
+        fetch("/api/orders?status=CONFIRMED&pageSize=100"),
+        fetch("/api/orders?status=PREPARING&pageSize=100"),
+      ]);
+      if (!confirmedRes.ok || !preparingRes.ok) throw new Error("Failed to load orders");
+      const [confirmedJson, preparingJson] = await Promise.all([
+        confirmedRes.json(),
+        preparingRes.json(),
+      ]);
+      const confirmed: Order[] = Array.isArray(confirmedJson) ? confirmedJson : (confirmedJson?.data ?? []);
+      const preparing: Order[] = Array.isArray(preparingJson) ? preparingJson : (preparingJson?.data ?? []);
+      setOrders([...confirmed, ...preparing]);
     } catch (error) {
       console.error("Error fetching orders:", error);
     } finally {
@@ -52,33 +58,57 @@ export default function KitchenDisplayPage() {
     }
   };
 
+  // One stable key per order/status so a retry after a network failure is idempotent.
+  const idempotencyKey = (signature: string) => {
+    const keys = idempotencyKeys.current;
+    let key = keys.get(signature);
+    if (!key) {
+      key = crypto.randomUUID();
+      keys.set(signature, key);
+    }
+    return key;
+  };
+
+  const transitionError = (error: unknown) =>
+    error instanceof Error ? error.message : "Order transition failed";
+
   const handleStartPrep = async (orderId: string) => {
+    const signature = `${orderId}:PREPARING`;
     try {
       const response = await fetch(`/api/orders/${orderId}/actions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey(signature) },
         body: JSON.stringify({ toStatus: "PREPARING" }),
       });
-      if (!response.ok) throw new Error("Order transition failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Order transition failed");
+      }
+      idempotencyKeys.current.delete(signature);
       toast({ title: "Order Started", description: "Marked as preparing" });
       fetchOrders();
     } catch (error) {
-      toast({ title: "Error", variant: "destructive" });
+      toast({ title: "Error", description: transitionError(error), variant: "destructive" });
     }
   };
 
   const handleMarkReady = async (orderId: string) => {
+    const signature = `${orderId}:READY`;
     try {
       const response = await fetch(`/api/orders/${orderId}/actions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey(signature) },
         body: JSON.stringify({ toStatus: "READY" }),
       });
-      if (!response.ok) throw new Error("Order transition failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Order transition failed");
+      }
+      idempotencyKeys.current.delete(signature);
       toast({ title: "Order Ready", description: "Marked as ready for service" });
       fetchOrders();
     } catch (error) {
-      toast({ title: "Error", variant: "destructive" });
+      toast({ title: "Error", description: transitionError(error), variant: "destructive" });
     }
   };
 

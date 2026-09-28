@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/use-toast";
 import { ChefHat, Clock, Users, Plus, Search, Play, Utensils } from "lucide-react";
 import { fetchCollection } from "@/lib/fetchCollection";
 
@@ -99,23 +100,26 @@ export default function RecipesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newRecipe),
       });
-      if (response.ok) {
-        setShowCreateDialog(false);
-        setNewRecipe({
-          menuItemId: "",
-          prepTime: 15,
-          cookTime: 20,
-          servings: 1,
-          difficulty: "MEDIUM",
-          instructions: [{ step: 1, text: "" }],
-          notes: "",
-          videoUrl: "",
-          allergenNotes: "",
-        });
-        fetchData();
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to create recipe");
       }
+      toast({ title: "Success", description: "Recipe created" });
+      setShowCreateDialog(false);
+      setNewRecipe({
+        menuItemId: "",
+        prepTime: 15,
+        cookTime: 20,
+        servings: 1,
+        difficulty: "MEDIUM",
+        instructions: [{ step: 1, text: "" }],
+        notes: "",
+        videoUrl: "",
+        allergenNotes: "",
+      });
+      fetchData();
     } catch (error) {
-      console.error("Error creating recipe:", error);
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create recipe", variant: "destructive" });
     }
   };
 

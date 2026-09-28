@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,8 @@ interface Customer {
   lastName: string;
   email: string | null;
   phone: string | null;
+  address: string | null;
+  birthday: string | null;
   vipStatus: boolean;
   dietaryPrefs: string[];
   allergens: string[];
@@ -121,6 +124,20 @@ function CustomersPageContent() {
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
+  // Deep link from search/dashboard: /customers?customerId=...
+  const searchParams = useSearchParams();
+  const deepLinkCustomerId = searchParams.get("customerId");
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+
+  useEffect(() => {
+    if (!deepLinkCustomerId || deepLinkHandled || loading) return;
+    const customer = customers.find((c) => c.id === deepLinkCustomerId);
+    if (customer) {
+      openCustomerDetail(customer);
+      setDeepLinkHandled(true);
+    }
+  }, [deepLinkCustomerId, customers, loading, deepLinkHandled]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
@@ -168,15 +185,17 @@ function CustomersPageContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      if (res.ok) {
-        toast({ title: "Success", description: `Customer ${editingCustomer ? "updated" : "created"}` });
-        setIsDialogOpen(false);
-        setEditingCustomer(null);
-        resetForm();
-        fetchCustomers();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save customer");
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to save", variant: "destructive" });
+      toast({ title: "Success", description: `Customer ${editingCustomer ? "updated" : "created"}` });
+      setIsDialogOpen(false);
+      setEditingCustomer(null);
+      resetForm();
+      fetchCustomers();
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save", variant: "destructive" });
     }
   };
 
@@ -212,7 +231,8 @@ function CustomersPageContent() {
     setEditingCustomer(c);
     setFormData({
       firstName: c.firstName, lastName: c.lastName, email: c.email || "", phone: c.phone || "",
-      address: "", birthday: "", notes: c.notes || "", vipStatus: c.vipStatus,
+      address: c.address || "", birthday: c.birthday ? c.birthday.split("T")[0] : "",
+      notes: c.notes || "", vipStatus: c.vipStatus,
       dietaryPrefs: c.dietaryPrefs, allergens: c.allergens,
     });
     setFormErrors({});
@@ -689,7 +709,9 @@ function CustomersPageContent() {
 export default function CustomersPage() {
   return (
     <ErrorBoundary>
-      <CustomersPageContent />
+      <Suspense fallback={null}>
+        <CustomersPageContent />
+      </Suspense>
     </ErrorBoundary>
   );
 }

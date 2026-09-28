@@ -135,7 +135,7 @@ export default function PromotionsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
-          code: form.code || null,
+          code: form.code.trim().toUpperCase() || null,
           minOrderAmount: form.minOrderAmount ? parseFloat(form.minOrderAmount) : null,
           maxDiscount: form.maxDiscount ? parseFloat(form.maxDiscount) : null,
           usageLimit: form.usageLimit ? parseInt(form.usageLimit) : null,
@@ -157,25 +157,33 @@ export default function PromotionsPage() {
 
   const handleToggleActive = async (promo: Promotion) => {
     try {
-      await fetch(`/api/promotions/${promo.id}`, {
+      const res = await fetch(`/api/promotions/${promo.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !promo.isActive }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update promotion");
+      }
       fetchPromotions();
-    } catch {
-      toast({ title: "Error", description: "Failed to update promotion", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to update promotion", variant: "destructive" });
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this promotion?")) return;
     try {
-      await fetch(`/api/promotions/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/promotions/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete promotion");
+      }
       toast({ title: "Success", description: "Promotion deleted" });
       fetchPromotions();
-    } catch {
-      toast({ title: "Error", description: "Failed to delete promotion", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete promotion", variant: "destructive" });
     }
   };
 

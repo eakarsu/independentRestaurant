@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "@/components/ui/use-toast";
 import { MapPin, Plus, Building, Phone, Mail, Clock, Star, Edit, Trash2 } from "lucide-react";
 
 interface Location {
@@ -110,14 +111,18 @@ export default function LocationsPage() {
         body: JSON.stringify(formData),
       });
 
-      if (response.ok) {
-        setShowCreateDialog(false);
-        setEditingLocation(null);
-        resetForm();
-        fetchLocations();
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to ${editingLocation ? "update" : "create"} location`);
       }
+
+      toast({ title: "Success", description: `Location ${editingLocation ? "updated" : "created"}` });
+      setShowCreateDialog(false);
+      setEditingLocation(null);
+      resetForm();
+      fetchLocations();
     } catch (error) {
-      console.error("Error saving location:", error);
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save location", variant: "destructive" });
     }
   };
 
@@ -126,12 +131,15 @@ export default function LocationsPage() {
 
     try {
       const response = await fetch(`/api/locations/${id}`, { method: "DELETE" });
-      if (response.ok) {
-        fetchLocations();
-        setSelectedLocation(null);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete location");
       }
+      toast({ title: "Success", description: "Location deleted" });
+      fetchLocations();
+      setSelectedLocation(null);
     } catch (error) {
-      console.error("Error deleting location:", error);
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete location", variant: "destructive" });
     }
   };
 

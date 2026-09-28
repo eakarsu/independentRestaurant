@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -175,6 +176,20 @@ function MenuPageContent() {
   }, [currentPage, pageSize, sortBy, sortDirection, selectedCategory]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Deep link from search: /menu?itemId=...
+  const searchParams = useSearchParams();
+  const deepLinkItemId = searchParams.get("itemId");
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+
+  useEffect(() => {
+    if (!deepLinkItemId || deepLinkHandled || loading) return;
+    const item = items.find((i) => i.id === deepLinkItemId);
+    if (item) {
+      openEditItemDialog(item);
+      setDeepLinkHandled(true);
+    }
+  }, [deepLinkItemId, items, loading, deepLinkHandled]);
 
   // Sort handler
   const handleSort = (field: string) => {
@@ -1153,7 +1168,9 @@ function MenuPageContent() {
 export default function MenuPage() {
   return (
     <ErrorBoundary>
-      <MenuPageContent />
+      <Suspense fallback={null}>
+        <MenuPageContent />
+      </Suspense>
     </ErrorBoundary>
   );
 }

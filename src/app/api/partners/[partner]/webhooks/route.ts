@@ -29,11 +29,20 @@ export async function POST(request: NextRequest, props: { params: Promise<{ part
   } catch {
     return NextResponse.json({ error: "Invalid partner event" }, { status: 400 });
   }
+  let existing;
   try {
     await prisma.webhookEvent.create({ data: { provider, eventId: event.id, eventType: event.type, payloadHash: sha256(rawBody) } });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ received: true, duplicate: true });
-    throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      existing = await prisma.webhookEvent.findUniqueOrThrow({
+        where: { provider_eventId: { provider, eventId: event.id } },
+      });
+      if (existing.payloadHash !== sha256(rawBody))
+        return NextResponse.json({ error: "Event payload changed" }, { status: 409 });
+      if (existing.status === "PROCESSED")
+        return NextResponse.json({ received: true, duplicate: true });
+      // FAILED or RECEIVED events fall through and are retried below.
+    } else throw error;
   }
   try {
     const order = await prisma.order.findFirst({ where: { providerOrderId: event.order.providerOrderId } });
@@ -45,7 +54,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ part
       idempotencyKey: `${provider}:${event.id}`,
       actor: { userId: `provider:${provider}`, role: "PROVIDER" },
     });
-    await prisma.webhookEvent.update({ where: { provider_eventId: { provider, eventId: event.id } }, data: { status: "PROCESSED", processedAt: new Date(), attempts: { increment: 1 } } });
+    await prisma.webhookEvent.update({ where: { provider_eventId: { provider, eventId: event.id } }, data: { status: "PROCESSED", processedAt: new Date(), attempts: { increment: 1 }, error: null } });
     return NextResponse.json({ received: true });
   } catch (error) {
     await prisma.webhookEvent.update({ where: { provider_eventId: { provider, eventId: event.id } }, data: { status: "FAILED", error: error instanceof Error ? error.message : "Unknown error", attempts: { increment: 1 } } });

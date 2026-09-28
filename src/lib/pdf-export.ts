@@ -1,11 +1,5 @@
-import jsPDF from "jspdf";
-import "jspdf-autotable";
-
-declare module "jspdf" {
-  interface jsPDF {
-    autoTable: (options: Record<string, unknown>) => jsPDF;
-  }
-}
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface ExportColumn {
   header: string;
@@ -57,7 +51,7 @@ export function exportToPDF(options: PDFExportOptions) {
     })
   );
 
-  doc.autoTable({
+  autoTable(doc, {
     head: [headers],
     body: rows,
     startY: subtitle ? 44 : 36,

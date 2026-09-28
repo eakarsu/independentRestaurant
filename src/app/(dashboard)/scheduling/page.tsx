@@ -154,11 +154,15 @@ export default function SchedulingPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this shift?")) return;
     try {
-      await fetch(`/api/schedules/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete shift");
+      }
       toast({ title: "Success", description: "Shift deleted" });
       fetchData();
-    } catch {
-      toast({ title: "Error", description: "Failed to delete", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
     }
   };
 

@@ -1,6 +1,24 @@
 import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+
+const EDITABLE_FIELDS = [
+  "categoryId",
+  "name",
+  "description",
+  "price",
+  "cost",
+  "imageUrl",
+  "allergens",
+  "isAvailable",
+  "is86d",
+  "isSpecial",
+  "calories",
+  "prepTime",
+] as const;
+
+const DATE_FIELDS = ["specialStartDate", "specialEndDate"] as const;
 
 async function handleGET(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -38,25 +56,36 @@ async function handleGET(request: NextRequest, props: { params: Promise<{ id: st
 async function handlePUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "A JSON object body is required" }, { status: 400 });
+    }
+    const payload = body as Record<string, unknown>;
+    const data: Record<string, unknown> = {};
+
+    // Only write keys the caller actually sent. The 86-toggle posts just
+    // {is86d} and must not clear unrelated columns such as the special-price
+    // window.
+    for (const field of EDITABLE_FIELDS) {
+      if (field in payload) data[field] = payload[field];
+    }
+    for (const field of DATE_FIELDS) {
+      if (!(field in payload)) continue;
+      const value = payload[field];
+      if (value === null) {
+        data[field] = null;
+      } else {
+        const date = typeof value === "string" || typeof value === "number" ? new Date(value) : new Date(NaN);
+        if (Number.isNaN(date.getTime())) {
+          return NextResponse.json({ error: `${field} must be a valid date or null` }, { status: 422 });
+        }
+        data[field] = date;
+      }
+    }
+
     const item = await prisma.menuItem.update({
       where: { id: params.id },
-      data: {
-        categoryId: body.categoryId,
-        name: body.name,
-        description: body.description,
-        price: body.price,
-        cost: body.cost,
-        imageUrl: body.imageUrl,
-        allergens: body.allergens,
-        isAvailable: body.isAvailable,
-        is86d: body.is86d,
-        isSpecial: body.isSpecial,
-        specialStartDate: body.specialStartDate ? new Date(body.specialStartDate) : null,
-        specialEndDate: body.specialEndDate ? new Date(body.specialEndDate) : null,
-        calories: body.calories,
-        prepTime: body.prepTime,
-      },
+      data: data as Prisma.MenuItemUpdateInput,
       include: {
         category: true,
       },

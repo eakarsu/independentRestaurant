@@ -243,3 +243,19 @@ A fresh private custom-format PostgreSQL backup was restored into a disposable l
 ### September 6 — local startup and autofill follow-up
 
 `start.sh` releases existing listeners owned by this project before migrations or builds, including the prior server process tree. It validates all port owners first and preserves unrelated applications. `npm run test:startup` passed for this project; a real repeated HomeServices startup also released both occupied ports and restarted successfully. Local autofill and authenticated browser login were verified across all five apps without changing account passwords. Local `.env` opt-ins and credentials remain untracked.
+
+### Fix pass — September 28, 2026
+
+Follow-up code audit findings were fixed:
+
+- Anonymous assistant: booking capability requests become staff-reviewed leads (never direct reservations), both `customer-ai` endpoints are rate limited, and consent is recorded in a signed HTTP-only cookie and verified server-side before any message is processed.
+- Payments: a late `payment_intent.payment_failed` cannot reopen a captured/refunded order (the superseded attempt is closed); audit events record the real from/to statuses and hash the persisted payload shape so optional `undefined` members no longer break chain verification; refunds created outside the app are acknowledged as IGNORED instead of retrying forever.
+- Partner webhooks: `PROVIDER` transitions are authorized, failed events are reprocessed on retry instead of being acknowledged as duplicates, and replay identity checks work without a user actor.
+- Outbox: terminal writes are lease-ownership checked; delivery scheduling uses one stable per-order key so exception recovery cannot dispatch twice; `worker:once` runs again (top-level await removed) and releases expired inventory reservations (reservations now set `expiresAt`).
+- Promotions: one shared evaluator powers validation and order creation; codes normalize to uppercase, usage limits are claimed atomically, discounts are capped, and redemption increments usage.
+- Concurrent order retries on one idempotency key return the winning order instead of a 500.
+- Reports: revenue is captured payments minus completed refunds, day/hour buckets use the restaurant timezone, non-manager roles get an error state instead of a crash, hardcoded trend deltas are gone, and Export downloads CSV.
+- UI: waste edits PATCH (no duplicate row or double stock decrement), performance edits update, bulk delete/86/VIP actions work, deliveries filter by type, menu 86 toggles keep special-price windows, customer edits no longer erase address/birthday, staff edits persist email/role, the sidebar shows the session user, kitchen uses stable retry keys, deep links open the referenced record, and failed writes surface errors.
+- PDF export works with jspdf-autotable v5; Socket.IO dead code and unused order-email helpers were removed; an `/assistant` page now exists; login attempts and anonymous AI are rate limited; integration tests run serially, removing a pre-existing parallel-run flake.
+
+Verification: typecheck, lint, 27 unit tests, 4 integration scenarios against a disposable PostgreSQL database, and the production build all pass. Live provider credentials were not exercised.

@@ -104,25 +104,31 @@ export default function InventoryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...ingredientForm, vendorId: ingredientForm.vendorId || null }),
       });
-      if (response.ok) {
-        toast({ title: "Success", description: `Ingredient ${editingIngredient ? "updated" : "created"}` });
-        setIsIngredientDialogOpen(false);
-        setEditingIngredient(null);
-        setIngredientForm({ name: "", unit: "lbs", currentStock: 0, parLevel: 0, reorderPoint: 0, cost: 0, vendorId: "" });
-        fetchData();
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save ingredient");
       }
+      toast({ title: "Success", description: `Ingredient ${editingIngredient ? "updated" : "created"}` });
+      setIsIngredientDialogOpen(false);
+      setEditingIngredient(null);
+      setIngredientForm({ name: "", unit: "lbs", currentStock: 0, parLevel: 0, reorderPoint: 0, cost: 0, vendorId: "" });
+      fetchData();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save ingredient", variant: "destructive" });
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save ingredient", variant: "destructive" });
     }
   };
 
   const handleDeleteIngredient = async (id: string) => {
     try {
-      await fetch(`/api/inventory/ingredients/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/inventory/ingredients/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete ingredient");
+      }
       toast({ title: "Success", description: "Ingredient deleted" });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to delete", variant: "destructive" });
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
     }
   };
 
@@ -134,15 +140,17 @@ export default function InventoryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(vendorForm),
       });
-      if (response.ok) {
-        toast({ title: "Success", description: `Vendor ${editingVendor ? "updated" : "created"}` });
-        setIsVendorDialogOpen(false);
-        setEditingVendor(null);
-        setVendorForm({ name: "", contactName: "", email: "", phone: "", address: "", paymentTerms: "", notes: "" });
-        fetchData();
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save vendor");
       }
+      toast({ title: "Success", description: `Vendor ${editingVendor ? "updated" : "created"}` });
+      setIsVendorDialogOpen(false);
+      setEditingVendor(null);
+      setVendorForm({ name: "", contactName: "", email: "", phone: "", address: "", paymentTerms: "", notes: "" });
+      fetchData();
     } catch (error) {
-      toast({ title: "Error", description: "Failed to save vendor", variant: "destructive" });
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save vendor", variant: "destructive" });
     }
   };
 

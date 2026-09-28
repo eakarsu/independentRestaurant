@@ -13,6 +13,11 @@ import {
   type Actor,
 } from "./authz";
 import { assertOnlineOrder } from "./online-policy";
+import {
+  evaluatePromotion,
+  normalizePromotionCode,
+  type PromotionEvaluationInput,
+} from "./promotions";
 import { configuredTaxProvider, type TaxProvider } from "./providers";
 import {
   PostgresInventoryProvider,
@@ -38,6 +43,7 @@ export const createOrderSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
   source: z.enum(["pos", "online", "phone", "delivery_app"]).default("pos"),
   discountCents: z.number().int().nonnegative().default(0),
+  promotionCode: z.string().trim().min(3).max(64).optional(),
   tipCents: z.number().int().nonnegative().default(0),
   deliveryAddress: z
     .object({
@@ -99,7 +105,10 @@ async function appendEvent(
     orderBy: { sequence: "desc" },
   });
   const sequence = (prior?.sequence ?? 0) + 1;
-  const payload = input.payload ?? {};
+  // Hash the JSON shape that is actually persisted. JSON.stringify drops
+  // `undefined` members, so hashing the raw payload would make verification
+  // fail for any payload containing an optional field that was not supplied.
+  const payload = jsonValue(input.payload ?? {});
   const actorUserId =
     input.actor.role === "PROVIDER" ? null : input.actor.userId;
   const hashInput = {
@@ -124,7 +133,7 @@ async function appendEvent(
       actorUserId,
       actorRole: input.actor.role,
       idempotencyKey: input.idempotencyKey,
-      payload: jsonValue(payload),
+      payload,
       previousHash: prior?.hash ?? null,
       hash: auditHash(hashInput),
     },
@@ -154,6 +163,7 @@ async function customerIdForActor(
 export async function priceRestaurantOrder(
   input: CreateOrderInput,
   taxProvider: TaxProvider = configuredTaxProvider(),
+  promotion?: PromotionEvaluationInput,
 ) {
   const menuIds = [...new Set(input.items.map((item) => item.menuItemId))];
   const menuItems = await prisma.menuItem.findMany({
@@ -212,14 +222,23 @@ export async function priceRestaurantOrder(
     subtotalCents += totalPriceCents;
     return { input: item, menuItem, selected, unitPriceCents, totalPriceCents };
   });
-  if (input.discountCents > subtotalCents)
+  const promotionEvaluation = promotion
+    ? evaluatePromotion(promotion, subtotalCents)
+    : undefined;
+  if (promotionEvaluation && !promotionEvaluation.valid)
+    throw new CommerceValidationError(
+      promotionEvaluation.reason ?? "Promo code is not valid",
+    );
+  const promotionDiscountCents = promotionEvaluation?.discountCents ?? 0;
+  const discountCents = input.discountCents + promotionDiscountCents;
+  if (discountCents > subtotalCents)
     throw new CommerceValidationError("Discount cannot exceed subtotal");
 
   const taxQuote = await taxProvider.quote({
     idempotencyKey: `${input.idempotencyKey}:tax`,
     currency: "USD",
     subtotalCents,
-    discountCents: input.discountCents,
+    discountCents,
     deliveryAddress: input.deliveryAddress,
     lines: preparedItems.map((item) => ({
       sku: item.menuItem.id,
@@ -233,7 +252,7 @@ export async function priceRestaurantOrder(
     );
   }
   const totalCents =
-    subtotalCents - input.discountCents + input.tipCents + taxQuote.taxCents;
+    subtotalCents - discountCents + input.tipCents + taxQuote.taxCents;
 
   if (
     !Number.isSafeInteger(totalCents) ||
@@ -241,7 +260,14 @@ export async function priceRestaurantOrder(
     totalCents > 100000000
   )
     throw new CommerceValidationError("Order total is invalid");
-  return { preparedItems, subtotalCents, taxQuote, totalCents };
+  return {
+    preparedItems,
+    subtotalCents,
+    taxQuote,
+    totalCents,
+    discountCents,
+    promotionDiscountCents,
+  };
 }
 
 export async function createRestaurantOrder(
@@ -285,8 +311,22 @@ export async function createRestaurantOrder(
     });
   }
 
-  const { preparedItems, subtotalCents, taxQuote, totalCents } =
-    await priceRestaurantOrder(input, taxProvider);
+  const promotion = input.promotionCode
+    ? await prisma.promotion.findFirst({
+        where: { code: normalizePromotionCode(input.promotionCode) },
+      })
+    : null;
+  if (input.promotionCode && !promotion)
+    throw new CommerceValidationError("Invalid or expired promo code");
+
+  const {
+    preparedItems,
+    subtotalCents,
+    taxQuote,
+    totalCents,
+    discountCents,
+    promotionDiscountCents,
+  } = await priceRestaurantOrder(input, taxProvider, promotion ?? undefined);
   if (
     input.expectedTotalCents !== undefined &&
     input.expectedTotalCents !== totalCents
@@ -295,9 +335,27 @@ export async function createRestaurantOrder(
       "Prices or tax changed. Review a fresh quote before ordering.",
     );
 
-  return prisma.$transaction(
+  try {
+    return await prisma.$transaction(
     async (tx) => {
       if (actor.role === "CUSTOMER") await assertOnlineOrder(tx, actor, input);
+      if (promotion) {
+        // Claim one use atomically; the conditional update loses the race
+        // exactly when another order consumed the last use.
+        const claimed = await tx.promotion.updateMany({
+          where: {
+            id: promotion.id,
+            ...(promotion.usageLimit !== null
+              ? { usageCount: { lt: promotion.usageLimit } }
+              : {}),
+          },
+          data: { usageCount: { increment: 1 } },
+        });
+        if (claimed.count === 0)
+          throw new CommerceConflictError(
+            "Promo code has reached its usage limit",
+          );
+      }
       const order = await tx.order.create({
         data: {
           orderNumber: `ORD-${Date.now()}-${input.idempotencyKey.slice(-6).toUpperCase()}`,
@@ -311,7 +369,7 @@ export async function createRestaurantOrder(
           status: "PENDING",
           subtotal: dollars(subtotalCents),
           tax: dollars(taxQuote.taxCents),
-          discount: dollars(input.discountCents),
+          discount: dollars(discountCents),
           tip: dollars(input.tipCents),
           total: dollars(totalCents),
           notes: input.notes,
@@ -346,6 +404,10 @@ export async function createRestaurantOrder(
           taxCents: taxQuote.taxCents,
           totalCents,
           taxReference: taxQuote.providerRef,
+          promotionCode: input.promotionCode
+            ? normalizePromotionCode(input.promotionCode)
+            : null,
+          promotionDiscountCents,
         },
       });
 
@@ -394,7 +456,34 @@ export async function createRestaurantOrder(
       });
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+    );
+  } catch (error) {
+    // Two concurrent requests with the same key can both pass the pre-check.
+    // The loser sees P2002 on the unique idempotencyKey; return the winner.
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const existing = await prisma.order.findUnique({
+        where: { idempotencyKey: input.idempotencyKey },
+      });
+      if (existing) {
+        if (existing.requestHash !== requestHash)
+          throw new CommerceConflictError(
+            "Idempotency key was reused with a different request",
+          );
+        return prisma.order.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: {
+            items: { include: { menuItem: true, modifiers: true } },
+            delivery: true,
+            events: true,
+          },
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 export async function transitionOrder(input: {
@@ -420,6 +509,7 @@ export async function transitionOrder(input: {
             "Customers may only cancel a pending request",
           );
       } else if (
+        input.actor.role !== "PROVIDER" &&
         !(ORDER_CONTROL_ROLES as readonly string[]).includes(input.actor.role)
       )
         throw new AuthorizationError("Order control role required");
@@ -431,9 +521,13 @@ export async function transitionOrder(input: {
           },
         },
       });
+      const sameActor =
+        input.actor.role === "PROVIDER"
+          ? priorEvent?.actorRole === "PROVIDER"
+          : priorEvent?.actorUserId === input.actor.userId;
       if (
         priorEvent &&
-        (priorEvent.actorUserId !== input.actor.userId ||
+        (!sameActor ||
           priorEvent.toStatus !== input.toStatus ||
           (priorEvent.payload as { reason?: string }).reason !==
             (input.reason ?? null))
@@ -489,14 +583,32 @@ export async function transitionOrder(input: {
         payload: { reason: input.reason ?? null },
       });
       if (input.toStatus === "READY" && order.type === "DELIVERY") {
-        await tx.outboxEvent.create({
-          data: {
-            orderId: order.id,
-            topic: "delivery.schedule",
-            idempotencyKey: `${input.idempotencyKey}:delivery`,
-            payload: jsonValue({ orderId: order.id }),
-          },
+        // Stable per-order key: recovering READY after an exception must not
+        // create a second provider dispatch under a fresh idempotency key.
+        const deliveryKey = `delivery:${order.id}`;
+        const existingDelivery = await tx.outboxEvent.findUnique({
+          where: { idempotencyKey: deliveryKey },
         });
+        if (!existingDelivery) {
+          await tx.outboxEvent.create({
+            data: {
+              orderId: order.id,
+              topic: "delivery.schedule",
+              idempotencyKey: deliveryKey,
+              payload: jsonValue({ orderId: order.id }),
+            },
+          });
+        } else if (existingDelivery.status === "DEAD_LETTER") {
+          await tx.outboxEvent.update({
+            where: { id: existingDelivery.id },
+            data: {
+              status: "PENDING",
+              attempts: 0,
+              availableAt: new Date(),
+              lastError: null,
+            },
+          });
+        }
       }
       return tx.order.findUniqueOrThrow({
         where: { id: order.id },
@@ -561,8 +673,23 @@ export async function transitionOrderItem(input: {
           },
         },
       });
-      if (duplicate)
+      if (duplicate) {
+        const payload = duplicate.payload as {
+          itemId?: string;
+          toStatus?: string;
+          reason?: string | null;
+        };
+        if (
+          duplicate.actorUserId !== input.actor.userId ||
+          payload.itemId !== input.itemId ||
+          payload.toStatus !== input.toStatus ||
+          (payload.reason ?? null) !== (input.reason ?? null)
+        )
+          throw new CommerceConflictError(
+            "Request key was used for different changes",
+          );
         return tx.orderItem.findUniqueOrThrow({ where: { id: input.itemId } });
+      }
       const item = await tx.orderItem.findFirst({
         where: { id: input.itemId, orderId: input.orderId },
       });

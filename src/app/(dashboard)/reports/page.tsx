@@ -8,7 +8,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { toast } from "@/components/ui/use-toast";
 import { DollarSign, ShoppingCart, TrendingUp, Users, Download, Calendar } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -31,6 +30,7 @@ interface ReportData {
 export default function ReportsPage() {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState("today");
   const [selectedItem, setSelectedItem] = useState<{ name: string; quantity: number; revenue: number } | null>(null);
 
@@ -38,6 +38,7 @@ export default function ReportsPage() {
 
   const fetchReport = async () => {
     setLoading(true);
+    setError(null);
     try {
       const today = new Date();
       let startDate = new Date();
@@ -63,21 +64,69 @@ export default function ReportsPage() {
       }
 
       const res = await fetch(`/api/reports?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to load report (HTTP ${res.status})`);
+      }
       const data = await res.json();
       setReportData(data);
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to load report", variant: "destructive" });
+    } catch (err) {
+      setReportData(null);
+      setError(err instanceof Error ? err.message : "Failed to load report");
     } finally {
       setLoading(false);
     }
   };
 
   const stats = reportData ? [
-    { title: "Total Revenue", value: formatCurrency(reportData.summary.totalRevenue), icon: DollarSign, change: "+12.5%" },
-    { title: "Total Orders", value: reportData.summary.totalOrders.toString(), icon: ShoppingCart, change: "+8" },
-    { title: "Avg Order Value", value: formatCurrency(reportData.summary.avgOrderValue), icon: TrendingUp, change: "+$2.50" },
-    { title: "Total Tips", value: formatCurrency(reportData.summary.totalTips), icon: Users, change: "+15%" },
+    { title: "Total Revenue", value: formatCurrency(reportData.summary.totalRevenue), icon: DollarSign },
+    { title: "Total Orders", value: reportData.summary.totalOrders.toString(), icon: ShoppingCart },
+    { title: "Avg Order Value", value: formatCurrency(reportData.summary.avgOrderValue), icon: TrendingUp },
+    { title: "Total Tips", value: formatCurrency(reportData.summary.totalTips), icon: Users },
   ] : [];
+
+  const handleExport = () => {
+    if (!reportData) return;
+
+    const escape = (value: unknown) => {
+      const s = value === null || value === undefined ? "" : String(value);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const lines: string[] = [
+      "Summary",
+      "Metric,Value",
+      `Total Orders,${escape(reportData.summary.totalOrders)}`,
+      `Total Revenue,${escape(reportData.summary.totalRevenue)}`,
+      `Total Tax,${escape(reportData.summary.totalTax)}`,
+      `Total Tips,${escape(reportData.summary.totalTips)}`,
+      `Total Discount,${escape(reportData.summary.totalDiscount)}`,
+      `Avg Order Value,${escape(reportData.summary.avgOrderValue)}`,
+    ];
+
+    if (reportData.topItems?.length) {
+      lines.push("", "Top Items", "Name,Quantity,Revenue");
+      reportData.topItems.forEach((item) => lines.push([item.name, item.quantity, item.revenue].map(escape).join(",")));
+    }
+
+    if (reportData.hourlyBreakdown) {
+      const hourly = Object.entries(reportData.hourlyBreakdown).filter(([, data]) => data.orders > 0);
+      if (hourly.length) {
+        lines.push("", "Hourly Breakdown", "Hour,Orders,Revenue");
+        hourly.forEach(([hour, data]) => lines.push([hour, data.orders, data.revenue].map(escape).join(",")));
+      }
+    }
+
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sales-report-${dateRange}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -101,12 +150,21 @@ export default function ReportsPage() {
                 <SelectItem value="month">Last 30 Days</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline"><Download className="mr-2 h-4 w-4" /> Export</Button>
+            <Button variant="outline" onClick={handleExport} disabled={!reportData}><Download className="mr-2 h-4 w-4" /> Export</Button>
           </div>
         </div>
 
         {loading ? (
           <div className="text-center py-12 text-muted-foreground">Loading report...</div>
+        ) : error ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p role="alert" className="font-medium text-destructive">{error}</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                Try another date range, or sign in with a manager account to view sales reports.
+              </p>
+            </CardContent>
+          </Card>
         ) : (
           <>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -118,7 +176,6 @@ export default function ReportsPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">{stat.value}</div>
-                    <p className="text-xs text-muted-foreground text-green-600">{stat.change}</p>
                   </CardContent>
                 </Card>
               ))}

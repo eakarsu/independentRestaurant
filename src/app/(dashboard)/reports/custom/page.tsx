@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +64,11 @@ const operators = [
   { value: "starts_with", label: "Starts With" },
 ];
 
+const SAVED_REPORTS_KEY = "custom-report-builder:saved";
+
+/** Columns computed in the UI for display only — the API cannot sort on them. */
+const DERIVED_SORT_COLUMNS = new Set(["staff", "table"]);
+
 export default function CustomReportBuilderPage() {
   const [config, setConfig] = useState<ReportConfig>({
     name: "New Report",
@@ -80,7 +85,29 @@ export default function CustomReportBuilderPage() {
 
   const [previewData, setPreviewData] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [savedReports, setSavedReports] = useState<{ name: string; config: ReportConfig }[]>([]);
+  const [reportsLoaded, setReportsLoaded] = useState(false);
+
+  // Persist saved reports so they survive a reload.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SAVED_REPORTS_KEY);
+      if (stored) setSavedReports(JSON.parse(stored));
+    } catch {
+      // ignore unreadable storage
+    }
+    setReportsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!reportsLoaded) return;
+    try {
+      window.localStorage.setItem(SAVED_REPORTS_KEY, JSON.stringify(savedReports));
+    } catch {
+      // storage unavailable; reports stay in memory
+    }
+  }, [savedReports, reportsLoaded]);
 
   const currentDataSource = dataSources.find((d) => d.value === config.dataSource);
 
@@ -119,16 +146,21 @@ export default function CustomReportBuilderPage() {
 
   const runReport = async () => {
     setLoading(true);
+    setError("");
     try {
       // Build query parameters
       const params = new URLSearchParams({
         dataSource: config.dataSource,
         columns: config.columns.join(","),
-        sortBy: config.sortBy,
         sortOrder: config.sortOrder,
         startDate: config.dateRange.start,
         endDate: config.dateRange.end,
       });
+
+      // Skip UI-only columns (e.g. staff, table) that the API cannot sort on.
+      if (!DERIVED_SORT_COLUMNS.has(config.sortBy)) {
+        params.set("sortBy", config.sortBy);
+      }
 
       if (config.filters.length > 0) {
         params.set("filters", JSON.stringify(config.filters));
@@ -138,10 +170,14 @@ export default function CustomReportBuilderPage() {
       }
 
       const response = await fetch(`/api/reports/custom?${params.toString()}`);
-      const data = await response.json();
-      setPreviewData(Array.isArray(data) ? data : data.data || []);
-    } catch (error) {
-      console.error("Error running report:", error);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || `Failed to run report (HTTP ${response.status})`);
+      }
+      setPreviewData(Array.isArray(data) ? data : data?.data || []);
+    } catch (err) {
+      setPreviewData([]);
+      setError(err instanceof Error ? err.message : "Failed to run report");
     } finally {
       setLoading(false);
     }
@@ -469,7 +505,9 @@ export default function CustomReportBuilderPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {previewData.length === 0 ? (
+              {error ? (
+                <p role="alert" className="py-12 text-center text-destructive">{error}</p>
+              ) : previewData.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <FileSpreadsheet className="h-16 w-16 mb-4" />
                   <p>Run the report to see data</p>

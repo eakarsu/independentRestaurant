@@ -1,21 +1,20 @@
 /**
  * Customer-facing AI assistant.
  *
- * The gap against AmeritAI's core product: its "General AI Assistant" greets
- * visitors, answers questions, captures leads and hands off to a human across
- * web/WhatsApp/Instagram/phone. `independentRestaurant` had only an internal
- * manager-advice endpoint.
- *
  *   POST /api/customer-ai            one conversation turn
  *   POST /api/customer-ai (consent)  record or withdraw privacy consent
  *   GET  /api/customer-ai            widget / iframe / direct-link config
  *
- * Public: this is what a diner talks to. Consent is enforced before any turn
- * is answered, and answers are composed from menu rows — no allergen or
- * ingredient claims are invented.
+ * Public: this is what a diner talks to. Consent is recorded server-side in a
+ * signed, HTTP-only cookie and verified before any turn is answered; answers
+ * are composed from menu rows — no allergen or ingredient claims are invented.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import prisma from "@/lib/prisma";
+import { getClientIp } from "@/lib/api-helpers";
+import { customerAiDailyLimiter, customerAiLimiter } from "@/lib/rate-limit";
+import { queueStaffAlert } from "@/lib/operations/notifications";
 import { askAssistant, providerConfigured } from "@/lib/customer/openrouter";
 import {
   analyseTranscript,
@@ -24,6 +23,40 @@ import {
   type ChatTurn,
   type ConsentState,
 } from "@/lib/customer/assistant";
+
+const CONSENT_COOKIE = "ir_assistant_consent";
+const CONSENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function consentSecret(): string | null {
+  return process.env.NEXTAUTH_SECRET || null;
+}
+
+function signConsent(sessionId: string, expiresAt: number, secret: string): string {
+  return createHmac("sha256", secret)
+    .update(`assistant-consent:${sessionId}:${expiresAt}`)
+    .digest("hex");
+}
+
+function verifyConsent(sessionId: string, raw: string | undefined): boolean {
+  const secret = consentSecret();
+  if (!secret || !raw) return false;
+  const [expiresRaw, signature] = raw.split(".");
+  const expiresAt = Number(expiresRaw);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < Date.now() || !signature) return false;
+  const expected = signConsent(sessionId, expiresAt, secret);
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(signature);
+  return (
+    expectedBuffer.length === suppliedBuffer.length &&
+    timingSafeEqual(expectedBuffer, suppliedBuffer)
+  );
+}
+
+function consentCookie(sessionId: string, secret: string): string {
+  const expiresAt = Date.now() + CONSENT_TTL_MS;
+  const secure = process.env.NEXTAUTH_URL?.startsWith("https://") ? "; Secure" : "";
+  return `${CONSENT_COOKIE}=${expiresAt}.${signConsent(sessionId, expiresAt, secret)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(CONSENT_TTL_MS / 1000)}${secure}`;
+}
 
 export async function GET() {
   return NextResponse.json({
@@ -41,7 +74,7 @@ export async function GET() {
     },
     privacy: {
       consentRequired: true,
-      note: "No message is processed until data privacy consent is recorded for the session.",
+      note: "Consent is recorded in a signed, HTTP-only session cookie and verified server-side before any message is processed.",
     },
     languages: { supported: ["en"], note: "50+ language support is not configured in this build." },
   });
@@ -49,34 +82,75 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const ip = getClientIp(request);
+    if (!customerAiLimiter(ip).success || !customerAiDailyLimiter(ip).success) {
+      return NextResponse.json(
+        { error: "Too many assistant requests. Please try again shortly." },
+        { status: 429 },
+      );
+    }
+
     const input = await request.json().catch(() => ({}));
     const action = String(input.action ?? "message");
 
     /* ------------------------- consent ------------------------- */
     if (action === "consent") {
       const sessionId = String(input.sessionId ?? "").trim();
-      if (!sessionId) return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
-      const state: ConsentState = input.granted === false ? "withdrawn" : "granted";
-      const gate = evaluateConsent(state);
-      return NextResponse.json({
+      if (!/^[\w-]{8,100}$/.test(sessionId))
+        return NextResponse.json({ error: "A valid sessionId is required" }, { status: 400 });
+      const secret = consentSecret();
+      if (!secret)
+        return NextResponse.json(
+          { error: "Assistant consent is not configured on this server" },
+          { status: 503 },
+        );
+      const recordedAt = new Date().toISOString();
+      if (input.granted === false) {
+        const gate = evaluateConsent("withdrawn");
+        const withdrawn = NextResponse.json({
+          sessionId,
+          consent: "withdrawn",
+          allowed: gate.allowed,
+          reason: gate.reason,
+          recordedAt,
+        });
+        withdrawn.headers.append(
+          "Set-Cookie",
+          `${CONSENT_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+        );
+        return withdrawn;
+      }
+      const gate = evaluateConsent("granted");
+      const granted = NextResponse.json({
         sessionId,
-        consent: state,
+        consent: "granted",
         allowed: gate.allowed,
         reason: gate.reason,
-        recordedAt: new Date().toISOString(),
+        recordedAt,
       });
+      granted.headers.append("Set-Cookie", consentCookie(sessionId, secret));
+      return granted;
     }
 
     /* -------------------------- message ------------------------ */
     const sessionId = String(input.sessionId ?? "").trim();
     const text = String(input.text ?? "").trim();
-    const consent: ConsentState = input.consent ?? "none";
-    if (!sessionId) return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+    if (!/^[\w-]{8,100}$/.test(sessionId))
+      return NextResponse.json({ error: "A valid sessionId is required" }, { status: 400 });
     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
+    if (text.length > 2000)
+      return NextResponse.json({ error: "Message is too long" }, { status: 400 });
 
-    const gate = evaluateConsent(consent);
-    if (!gate.allowed) {
-      return NextResponse.json({ blocked: true, reason: gate.reason, consentRequired: true }, { status: 403 });
+    if (!verifyConsent(sessionId, request.cookies.get(CONSENT_COOKIE)?.value)) {
+      const gate = evaluateConsent("none");
+      return NextResponse.json(
+        {
+          blocked: true,
+          reason: gate.reason,
+          consentRequired: true,
+        },
+        { status: 403 },
+      );
     }
 
     // Menu facts come from rows; nothing is invented.
@@ -110,7 +184,7 @@ export async function POST(request: NextRequest) {
       })),
     };
 
-    const deterministic = reply(text, ctx, consent);
+    const deterministic = reply(text, ctx, "granted" as ConsentState);
 
     // The assistant must actually reach the model. Only fall back to the
     // deterministic answer when no provider is configured or the call fails,
@@ -165,11 +239,10 @@ export async function POST(request: NextRequest) {
     const analysis = analyseTranscript(turns);
 
     // Human handoff must escalate the conversation, not just flag it:
-    // capture a callback record and raise a staff notification.
+    // capture a callback record and raise a queued staff alert.
     let handoffTicket: { callbackId: string | null; notificationId: string | null } | null = null;
     if (result.handoff.handoff) {
       let callbackId: string | null = null;
-      let notificationId: string | null = null;
       try {
         const handoffLead = await prisma.customerLead.create({
           data: {
@@ -183,22 +256,15 @@ export async function POST(request: NextRequest) {
         });
         callbackId = handoffLead.id;
       } catch { /* lead capture is best-effort */ }
+      let notificationId: string | null = null;
       try {
-        const staffRecipient = process.env.RESTAURANT_STAFF_NOTIFICATION_TARGET;
-        if (staffRecipient) {
-          const n = await prisma.notification.create({
-            data: {
-              type: 'HANDOFF',
-              channel: 'EMAIL',
-              recipient: staffRecipient,
-              subject: 'Guest needs a person',
-              message: `Session ${sessionId}: ${result.handoff.reason ?? 'guest requested a human'}\nGuest said: ${text.slice(0, 500)}`,
-              metadata: { sessionId, callbackId },
-            },
-          });
-          notificationId = n.id;
-        }
-      } catch { /* notification is best-effort */ }
+        const alert = await queueStaffAlert({
+          subject: 'Guest needs a person',
+          message: `Session ${sessionId}: ${result.handoff.reason ?? 'guest requested a human'}\nGuest said: ${text.slice(0, 500)}`,
+          metadata: { sessionId, callbackId },
+        });
+        notificationId = alert?.id ?? null;
+      } catch { /* alert is best-effort */ }
       handoffTicket = { callbackId, notificationId };
     }
 

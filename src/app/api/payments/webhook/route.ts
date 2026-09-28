@@ -7,6 +7,7 @@ import { sha256 } from "@/lib/commerce/crypto";
 import {
   applyPaymentWebhook,
   applyRefundReceipt,
+  UnrecognizedRefundError,
 } from "@/lib/commerce/payments";
 
 export async function POST(request: NextRequest) {
@@ -138,6 +139,21 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ received: true });
   } catch (error) {
+    if (error instanceof UnrecognizedRefundError) {
+      // Refunds created outside the app (for example in the Stripe dashboard)
+      // cannot be matched to an order. Acknowledge so Stripe stops retrying,
+      // and leave the event marked IGNORED for manual reconciliation.
+      await prisma.webhookEvent.update({
+        where: { provider_eventId: { provider: "stripe", eventId: event.id } },
+        data: {
+          status: "IGNORED",
+          processedAt: new Date(),
+          attempts: { increment: 1 },
+          error: error.message,
+        },
+      });
+      return NextResponse.json({ received: true, ignored: true });
+    }
     await prisma.webhookEvent.update({
       where: { provider_eventId: { provider: "stripe", eventId: event.id } },
       data: {

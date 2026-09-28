@@ -1,25 +1,39 @@
 import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { restaurantSettings } from "@/lib/operations/settings";
+import { dateInZone, zonedMidnight } from "@/lib/operations/time";
 
 async function handleGET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const type = searchParams.get("type") || "daily";
-    const startDate = searchParams.get("startDate");
-    const endDate = searchParams.get("endDate");
+    const startParam = searchParams.get("startDate");
+    const endParam = searchParams.get("endDate");
 
-    const start = startDate ? new Date(startDate) : new Date();
-    start.setHours(0, 0, 0, 0);
+    const location = await prisma.location.findFirst({
+      where: { isPrimary: true, isActive: true },
+      select: { timezone: true },
+    });
+    const profile = await restaurantSettings();
+    const timezone =
+      profile.value?.timezone ||
+      location?.timezone ||
+      process.env.RESTAURANT_TIMEZONE ||
+      "America/New_York";
 
-    const end = endDate ? new Date(endDate) : new Date();
-    end.setHours(23, 59, 59, 999);
+    const startDay = dateInZone(startParam ? new Date(startParam) : new Date(), timezone);
+    const endDay = dateInZone(endParam ? new Date(endParam) : new Date(), timezone);
+    const afterEnd = new Date(`${endDay}T12:00:00Z`);
+    afterEnd.setUTCDate(afterEnd.getUTCDate() + 1);
+    const start = zonedMidnight(startDay, timezone);
+    const end = zonedMidnight(afterEnd.toISOString().slice(0, 10), timezone);
 
-    // Get orders for the period
+    // Only orders with captured money count as sales. Refunds are subtracted
+    // from captured payments so this is a net figure, not a gross billing total.
     const orders = await prisma.order.findMany({
       where: {
-        createdAt: { gte: start, lte: end },
-        status: { not: "CANCELLED" },
+        createdAt: { gte: start, lt: end },
+        paymentStatus: { in: ["PAID", "PARTIALLY_REFUNDED", "REFUNDED"] },
       },
       include: {
         items: {
@@ -28,13 +42,26 @@ async function handleGET(request: NextRequest) {
       },
     });
 
+    const [payments, refunds] = await Promise.all([
+      prisma.payment.findMany({
+        where: { createdAt: { gte: start, lt: end }, status: "completed" },
+        select: { amount: true },
+      }),
+      prisma.refund.findMany({
+        where: { status: "SUCCEEDED", completedAt: { gte: start, lt: end } },
+        select: { amountCents: true },
+      }),
+    ]);
+    const grossRevenue = payments.reduce((sum, p) => sum + p.amount, 0);
+    const refundTotal = refunds.reduce((sum, r) => sum + r.amountCents, 0) / 100;
+
     // Calculate metrics
     const totalOrders = orders.length;
-    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
+    const totalRevenue = grossRevenue - refundTotal;
     const totalTax = orders.reduce((sum, o) => sum + o.tax, 0);
     const totalTips = orders.reduce((sum, o) => sum + o.tip, 0);
     const totalDiscount = orders.reduce((sum, o) => sum + o.discount, 0);
-    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    const avgOrderValue = totalOrders > 0 ? grossRevenue / totalOrders : 0;
 
     // Top selling items
     const itemSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
@@ -53,13 +80,18 @@ async function handleGET(request: NextRequest) {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10);
 
-    // Hourly breakdown
+    // Hourly breakdown, bucketed in the restaurant's timezone.
+    const hourFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "2-digit",
+      hourCycle: "h23",
+    });
     const hourlyBreakdown: Record<number, { orders: number; revenue: number }> = {};
     for (let i = 0; i < 24; i++) {
       hourlyBreakdown[i] = { orders: 0, revenue: 0 };
     }
     orders.forEach((order) => {
-      const hour = new Date(order.createdAt).getHours();
+      const hour = Number(hourFormatter.format(new Date(order.createdAt))) % 24;
       hourlyBreakdown[hour].orders += 1;
       hourlyBreakdown[hour].revenue += order.total;
     });
@@ -80,7 +112,7 @@ async function handleGET(request: NextRequest) {
       });
 
     return NextResponse.json({
-      period: { start, end },
+      period: { start, end, timezone },
       summary: {
         totalOrders,
         totalRevenue,
@@ -88,6 +120,8 @@ async function handleGET(request: NextRequest) {
         totalTips,
         totalDiscount,
         avgOrderValue,
+        grossRevenue,
+        refunds: refundTotal,
       },
       topItems,
       hourlyBreakdown,

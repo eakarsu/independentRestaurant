@@ -59,11 +59,15 @@ export default function DeliveriesPage() {
   const fetchOrders = async () => {
     try {
       // /api/orders returns a paginated object ({ data, pagination }), not a bare array.
-      const res = await fetch("/api/orders?type=DELIVERY&pageSize=200");
+      const res = await fetch("/api/orders?type=DELIVERY&pageSize=100");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load deliveries");
+      }
       const json = await res.json();
       setOrders(Array.isArray(json) ? json : (json?.data ?? []));
-    } catch {
-      toast({ title: "Error", description: "Failed to load deliveries", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to load deliveries", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -91,10 +95,13 @@ export default function DeliveriesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deliveredAt: new Date().toISOString() }),
       });
-      if (!response.ok) throw new Error("Delivery update failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to mark order delivered");
+      }
       await handleUpdateStatus(orderId, "COMPLETED");
-    } catch {
-      toast({ title: "Error", description: "Failed to update", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to update", variant: "destructive" });
     }
   };
 
@@ -106,11 +113,20 @@ export default function DeliveriesPage() {
   const activeDeliveries = orders.filter(o => !["COMPLETED", "CANCELLED"].includes(o.status));
   const completedDeliveries = orders.filter(o => ["COMPLETED", "CANCELLED"].includes(o.status));
 
+  const deliveryDurations = orders.flatMap((o) => {
+    const deliveredAt = o.delivery?.deliveredAt;
+    if (!deliveredAt) return [];
+    return [new Date(deliveredAt).getTime() - new Date(o.createdAt).getTime()];
+  }).filter((duration) => duration >= 0);
+  const avgTime = deliveryDurations.length
+    ? `${Math.round(deliveryDurations.reduce((sum, d) => sum + d, 0) / deliveryDurations.length / 60000)} min`
+    : "Not tracked";
+
   const stats = {
     active: activeDeliveries.length,
     outForDelivery: orders.filter(o => o.status === "READY").length,
     delivered: completedDeliveries.filter(o => o.status === "COMPLETED").length,
-    avgTime: "32 min",
+    avgTime,
   };
 
   const formatTime = (date: string) => {

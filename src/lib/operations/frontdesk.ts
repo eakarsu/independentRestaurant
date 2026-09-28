@@ -14,7 +14,9 @@ export async function updateTable(tx:Prisma.TransactionClient,actor:Actor,id:str
  const row=await tx.table.update({where:{id},data:input});await audit(tx,actor,'TABLE_UPDATED','Table',id,{before:table,after:row});return row;
 }
 export const waitlistSchema=z.object({customerName:z.string().trim().min(1).max(200),customerPhone:z.string().trim().min(7).max(40),partySize:z.number().int().min(1).max(100),estimatedWait:z.number().int().min(0).max(600),quotedTime:z.string().datetime().nullable().optional(),notes:z.string().max(3000).optional()}).strict();
-export async function changeWaitlist(tx:Prisma.TransactionClient,actor:Actor,id:string,action:'SEATED'|'LEFT'){
- const row=await tx.waitlist.findUnique({where:{id}});if(!row)throw new OperationError('Waitlist entry not found',404);if(!['WAITING','NOTIFIED'].includes(row.status))throw new OperationError('This waitlist entry is closed',409);
+export async function changeWaitlist(tx:Prisma.TransactionClient,actor:Actor,id:string,action:'NOTIFIED'|'SEATED'|'LEFT'){
+ const row=await tx.waitlist.findUnique({where:{id}});if(!row)throw new OperationError('Waitlist entry not found',404);
+ if(action==='NOTIFIED'&&row.status!=='WAITING')throw new OperationError('Only a waiting entry can be marked notified',409);
+ if(action!=='NOTIFIED'&&!['WAITING','NOTIFIED'].includes(row.status))throw new OperationError('This waitlist entry is closed',409);
  const result=await tx.waitlist.update({where:{id},data:{status:action}});await audit(tx,actor,`WAITLIST_${action}`,'Waitlist',id,{previous:row.status});return result;
 }

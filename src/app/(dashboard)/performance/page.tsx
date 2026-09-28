@@ -137,24 +137,38 @@ export default function PerformancePage() {
 
   const handleAddRecord = async () => {
     try {
-      const response = await fetch("/api/performance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRecord),
-      });
-      if (response.ok) {
-        setShowAddRecord(false);
-        setNewRecord({
-          staffId: "",
-          metric: "",
-          value: 5,
-          notes: "",
-          date: new Date().toISOString().split("T")[0],
-        });
-        fetchData();
+      const response = await fetch(
+        editingRecord ? `/api/performance/${editingRecord.id}` : "/api/performance",
+        {
+          method: editingRecord ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(newRecord),
+        }
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save review");
       }
+      toast({
+        title: "Success",
+        description: editingRecord ? "Performance review updated" : "Performance review recorded",
+      });
+      setShowAddRecord(false);
+      setEditingRecord(null);
+      setNewRecord({
+        staffId: "",
+        metric: "",
+        value: 5,
+        notes: "",
+        date: new Date().toISOString().split("T")[0],
+      });
+      fetchData();
     } catch (error) {
-      console.error("Error adding record:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to save review",
+        variant: "destructive",
+      });
     }
   };
 
@@ -180,6 +194,13 @@ export default function PerformancePage() {
 
   const startEditRecord = (record: PerformanceRecord) => {
     setEditingRecord(record);
+    setNewRecord({
+      staffId: record.staffId,
+      metric: record.metric,
+      value: record.value,
+      notes: record.notes || "",
+      date: record.date.split("T")[0],
+    });
     setShowAddRecord(true);
   };
 
@@ -210,7 +231,7 @@ export default function PerformancePage() {
               <SelectItem value="90">Last 90 days</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={() => setShowAddRecord(true)}>
+          <Button onClick={() => { setEditingRecord(null); setShowAddRecord(true); }}>
             <Plus className="h-4 w-4 mr-2" />
             Add Review
           </Button>
@@ -450,11 +471,11 @@ export default function PerformancePage() {
       </Tabs>
 
       {/* Add Performance Review Dialog */}
-      <Dialog open={showAddRecord} onOpenChange={setShowAddRecord}>
+      <Dialog open={showAddRecord} onOpenChange={(open) => { setShowAddRecord(open); if (!open) setEditingRecord(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Performance Review</DialogTitle>
-            <DialogDescription>Record a performance evaluation for a staff member</DialogDescription>
+            <DialogTitle>{editingRecord ? "Edit Performance Review" : "Add Performance Review"}</DialogTitle>
+            <DialogDescription>{editingRecord ? "Update this performance evaluation" : "Record a performance evaluation for a staff member"}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -535,7 +556,7 @@ export default function PerformancePage() {
                 onClick={handleAddRecord}
                 disabled={!newRecord.staffId || !newRecord.metric}
               >
-                Add Review
+                {editingRecord ? "Save Changes" : "Add Review"}
               </Button>
             </div>
           </div>

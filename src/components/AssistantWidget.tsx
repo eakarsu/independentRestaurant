@@ -57,14 +57,26 @@ export default function AssistantWidget({
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns, guided]);
 
-  const acceptConsent = useCallback(() => {
-    setConsent("granted");
+  const acceptConsent = useCallback(async () => {
     try {
-      localStorage.setItem(CONSENT_KEY, "granted");
+      const res = await fetch("/api/customer-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "consent", sessionId: sessionId.current, granted: true }),
+      });
+      if (!res.ok) throw new Error("consent");
+      try {
+        localStorage.setItem(CONSENT_KEY, "granted");
+      } catch {
+        /* ignore */
+      }
+      setConsent("granted");
+      setTurns([{ role: "assistant", text: greeting }]);
     } catch {
-      /* ignore */
+      setTurns([
+        { role: "assistant", text: "I couldn't record your consent just now. Please try again." },
+      ]);
     }
-    setTurns([{ role: "assistant", text: greeting }]);
   }, [greeting]);
 
   const send = useCallback(
@@ -78,12 +90,17 @@ export default function AssistantWidget({
         const res = await fetch("/api/customer-ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId: sessionId.current, text: body, consent }),
+          body: JSON.stringify({ sessionId: sessionId.current, text: body }),
         });
         const json = await res.json();
         if (res.status === 403) {
           setTurns((t) => [...t, { role: "assistant", text: json.reason ?? "Consent is required." }]);
           setConsent("none");
+          try {
+            localStorage.removeItem(CONSENT_KEY);
+          } catch {
+            /* ignore */
+          }
           return;
         }
         setTurns((t) => [...t, { role: "assistant", text: json.reply ?? "I'm not sure — let me get a person." }]);

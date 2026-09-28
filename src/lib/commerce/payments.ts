@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type OrderStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   ORDER_WRITE_ROLES,
@@ -26,6 +26,8 @@ async function appendPaymentEvent(
     actor: Actor;
     idempotencyKey: string;
     payload: unknown;
+    fromStatus?: OrderStatus | null;
+    toStatus?: OrderStatus | null;
   },
 ) {
   const prior = await tx.orderEvent.findFirst({
@@ -38,25 +40,35 @@ async function appendPaymentEvent(
   const sequence = (prior?.sequence ?? 0) + 1;
   const actorUserId =
     input.actor.role === "PROVIDER" ? null : input.actor.userId;
+  // Hash the JSON shape that is actually persisted; JSON.stringify drops
+  // `undefined` members and hashing the raw payload would break verification.
+  const payload = toJson(input.payload);
   const fields = {
     orderId: input.orderId,
     sequence,
     type: input.type,
-    fromStatus: order.status,
-    toStatus: order.status,
+    fromStatus: input.fromStatus ?? order.status,
+    toStatus: input.toStatus ?? order.status,
     actorUserId,
     actorRole: input.actor.role,
     idempotencyKey: input.idempotencyKey,
-    payload: input.payload,
+    payload,
     previousHash: prior?.hash ?? null,
   };
   await tx.orderEvent.create({
     data: {
       ...fields,
-      payload: toJson(input.payload),
       hash: auditHash(fields),
     },
   });
+}
+
+export class UnrecognizedRefundError extends Error {
+  status = 422;
+  constructor(message = "Refund receipt is not recognized") {
+    super(message);
+    this.name = "UnrecognizedRefundError";
+  }
 }
 
 function validKey(key: string) {
@@ -171,6 +183,8 @@ export async function beginPayment(
       actor: input.actor,
       idempotencyKey: `${created.idempotencyKey}:started`,
       payload: { amountCents },
+      fromStatus: locked.status,
+      toStatus: "PAYMENT_PENDING",
     });
     return created;
   });
@@ -312,11 +326,15 @@ export async function reconcilePayment(
       const order = await tx.order.findUniqueOrThrow({
         where: { id: input.orderId },
       });
+      const restoredStatus =
+        order.status === "PAYMENT_PENDING"
+          ? attempt.resumeStatus || "CONFIRMED"
+          : order.status;
       if (order.status === "PAYMENT_PENDING")
         await tx.order.update({
           where: { id: order.id },
           data: {
-            status: attempt.resumeStatus || "CONFIRMED",
+            status: restoredStatus,
             paymentStatus: "UNPAID",
             version: { increment: 1 },
           },
@@ -327,6 +345,8 @@ export async function reconcilePayment(
         actor: input.actor,
         idempotencyKey: `${attempt.idempotencyKey}:expired`,
         payload: { reference: receipt.providerRef },
+        fromStatus: order.status,
+        toStatus: restoredStatus,
       });
     });
   }
@@ -443,6 +463,8 @@ export async function requestRefund(
         amountCents: created.amountCents,
         reason: created.reason,
       },
+      fromStatus: order.status,
+      toStatus: "REFUND_PENDING",
     });
     return created;
   });
@@ -503,7 +525,9 @@ export async function applyRefundReceipt(receipt: RefundReceipt) {
     where: { idempotencyKey: receipt.refundKey },
   });
   if (!found)
-    throw new CommerceValidationError("Refund receipt is not recognized");
+    throw new UnrecognizedRefundError(
+      "Refund was not created by this application; reconcile it manually",
+    );
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${found.orderId} FOR UPDATE`;
     const row = await tx.refund.findUniqueOrThrow({ where: { id: found.id } }),
@@ -550,15 +574,16 @@ export async function applyRefundReceipt(receipt: RefundReceipt) {
       full = (total._sum.amountCents || 0) === payment.amountCents;
     if ((total._sum.amountCents || 0) > payment.amountCents)
       throw new CommerceConflictError("Refunds exceed captured payments");
+    const nextStatus = full
+      ? "REFUNDED"
+      : order.cancelledAt
+        ? "CANCELLED"
+        : "COMPLETED";
     if (status !== "PENDING")
       await tx.order.update({
         where: { id: row.orderId },
         data: {
-          status: full
-            ? "REFUNDED"
-            : order.cancelledAt
-              ? "CANCELLED"
-              : "COMPLETED",
+          status: nextStatus,
           paymentStatus: full
             ? "REFUNDED"
             : total._sum.amountCents
@@ -586,6 +611,8 @@ export async function applyRefundReceipt(receipt: RefundReceipt) {
           amountCents: row.amountCents,
           full,
         },
+        fromStatus: order.status,
+        toStatus: status !== "PENDING" ? nextStatus : order.status,
       });
     return saved;
   });
@@ -725,37 +752,87 @@ export async function applyPaymentWebhook(input: {
             paymentReference: input.paymentReference,
             amountCents: received,
           },
+          fromStatus: order.status,
+          toStatus: resumedStatus,
         });
       } else {
-        await tx.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status: "REQUIRES_ACTION",
-            failureCode: input.failureCode,
-            failureMessage: input.failureMessage,
-          },
-        });
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            paymentStatus: "AUTHORIZING",
-            status:
+        const capturedAlready =
+          ["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(
+            order.paymentStatus,
+          ) ||
+          Boolean(
+            await tx.payment.findFirst({
+              where: { orderId: order.id, status: "completed" },
+              select: { id: true },
+            }),
+          );
+        const terminalStatus = [
+          "REFUNDED",
+          "REFUND_PENDING",
+          "COMPLETED",
+        ].includes(order.status);
+        if (capturedAlready || terminalStatus) {
+          // A late failure for a superseded attempt must not reopen an order
+          // that is already paid, refunded or closed. Close the attempt so it
+          // cannot be resumed for another charge, and keep the evidence.
+          if (["PENDING", "REQUIRES_ACTION"].includes(attempt.status)) {
+            await tx.paymentAttempt.update({
+              where: { id: attempt.id },
+              data: {
+                status: "FAILED",
+                failureCode: input.failureCode,
+                failureMessage: input.failureMessage,
+              },
+            });
+          }
+          await appendPaymentEvent(tx, {
+            orderId: order.id,
+            type: "PAYMENT_FAILED",
+            actor: webhookActor,
+            idempotencyKey: `stripe:${input.eventId}`,
+            payload: {
+              paymentReference: input.paymentReference,
+              code: input.failureCode,
+              message: input.failureMessage,
+              ignored: "order already captured; no order state change",
+            },
+            fromStatus: order.status,
+            toStatus: order.status,
+          });
+        } else {
+          await tx.paymentAttempt.update({
+            where: { id: attempt.id },
+            data: {
+              status: "REQUIRES_ACTION",
+              failureCode: input.failureCode,
+              failureMessage: input.failureMessage,
+            },
+          });
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              paymentStatus: "AUTHORIZING",
+              status:
+                order.status === "CANCELLED" ? "CANCELLED" : "PAYMENT_PENDING",
+              lastError: input.failureMessage ?? "Payment failed",
+              version: { increment: 1 },
+            },
+          });
+          await appendPaymentEvent(tx, {
+            orderId: order.id,
+            type: "PAYMENT_FAILED",
+            actor: webhookActor,
+            idempotencyKey: `stripe:${input.eventId}`,
+            payload: {
+              paymentReference: input.paymentReference,
+              code: input.failureCode,
+              message: input.failureMessage,
+            },
+            fromStatus: order.status,
+            toStatus:
               order.status === "CANCELLED" ? "CANCELLED" : "PAYMENT_PENDING",
-            lastError: input.failureMessage ?? "Payment failed",
-            version: { increment: 1 },
-          },
-        });
-        await appendPaymentEvent(tx, {
-          orderId: order.id,
-          type: "PAYMENT_FAILED",
-          actor: webhookActor,
-          idempotencyKey: `stripe:${input.eventId}`,
-          payload: {
-            paymentReference: input.paymentReference,
-            code: input.failureCode,
-            message: input.failureMessage,
-          },
-        });
+          });
+        }
       }
       return tx.order.findUniqueOrThrow({
         where: { id: order.id },

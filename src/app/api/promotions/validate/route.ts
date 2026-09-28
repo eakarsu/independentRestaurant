@@ -1,95 +1,33 @@
 import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { evaluatePromotion, normalizePromotionCode } from "@/lib/commerce/promotions";
 
 async function handlePOST(request: NextRequest) {
   try {
-    const { code, orderTotal, orderItems } = await request.json();
+    const { code, orderTotal } = await request.json();
 
-    if (!code) {
-      return NextResponse.json(
-        { error: "Promo code is required" },
-        { status: 400 }
-      );
+    if (typeof code !== "string" || !code.trim()) {
+      return NextResponse.json({ error: "Promo code is required" }, { status: 400 });
+    }
+    const subtotalCents = Math.round(Number(orderTotal ?? 0) * 100);
+    if (!Number.isFinite(subtotalCents) || subtotalCents < 0) {
+      return NextResponse.json({ error: "orderTotal must be a non-negative number" }, { status: 400 });
     }
 
-    const now = new Date();
-    const currentDay = now.getDay();
-    const currentTime = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
-
     const promotion = await prisma.promotion.findFirst({
-      where: {
-        code: code.toUpperCase(),
-        isActive: true,
-        startDate: { lte: now },
-        endDate: { gte: now },
-      },
+      where: { code: normalizePromotionCode(code) },
     });
-
     if (!promotion) {
       return NextResponse.json(
         { valid: false, error: "Invalid or expired promo code" },
-        { status: 200 }
+        { status: 200 },
       );
     }
 
-    // Check usage limit
-    if (promotion.usageLimit && promotion.usageCount >= promotion.usageLimit) {
-      return NextResponse.json(
-        { valid: false, error: "Promo code has reached its usage limit" },
-        { status: 200 }
-      );
-    }
-
-    // Check minimum order amount
-    if (promotion.minOrderAmount && orderTotal < promotion.minOrderAmount) {
-      return NextResponse.json(
-        {
-          valid: false,
-          error: `Minimum order of $${promotion.minOrderAmount} required`,
-        },
-        { status: 200 }
-      );
-    }
-
-    // Check day of week
-    if (promotion.dayOfWeek.length > 0 && !promotion.dayOfWeek.includes(currentDay)) {
-      return NextResponse.json(
-        { valid: false, error: "This promo is not valid today" },
-        { status: 200 }
-      );
-    }
-
-    // Check time window for happy hour
-    if (promotion.startTime && promotion.endTime) {
-      if (currentTime < promotion.startTime || currentTime > promotion.endTime) {
-        return NextResponse.json(
-          {
-            valid: false,
-            error: `This promo is only valid from ${promotion.startTime} to ${promotion.endTime}`,
-          },
-          { status: 200 }
-        );
-      }
-    }
-
-    // Calculate discount
-    let discount = 0;
-    switch (promotion.type) {
-      case "PERCENTAGE":
-        discount = (orderTotal * promotion.value) / 100;
-        if (promotion.maxDiscount && discount > promotion.maxDiscount) {
-          discount = promotion.maxDiscount;
-        }
-        break;
-      case "FIXED_AMOUNT":
-        discount = Math.min(promotion.value, orderTotal);
-        break;
-      case "HAPPY_HOUR":
-        discount = (orderTotal * promotion.value) / 100;
-        break;
-      default:
-        discount = 0;
+    const evaluation = evaluatePromotion(promotion, subtotalCents);
+    if (!evaluation.valid) {
+      return NextResponse.json({ valid: false, error: evaluation.reason }, { status: 200 });
     }
 
     return NextResponse.json({
@@ -100,14 +38,11 @@ async function handlePOST(request: NextRequest) {
         type: promotion.type,
         value: promotion.value,
       },
-      discount: Math.round(discount * 100) / 100,
+      discount: evaluation.discountCents / 100,
     });
   } catch (error) {
     console.error("Error validating promotion:", error);
-    return NextResponse.json(
-      { error: "Failed to validate promotion" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to validate promotion" }, { status: 500 });
   }
 }
 

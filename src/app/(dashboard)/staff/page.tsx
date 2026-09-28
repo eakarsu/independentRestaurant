@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -161,15 +162,13 @@ function StaffPageContent() {
         body: JSON.stringify(formData),
       });
       if (!res.ok) throw new Error((await res.json()).error || "Unable to save staff");
-      if (res.ok) {
-        toast({ title: "Success", description: `Staff member ${editingStaff ? "updated" : "created"}` });
-        setIsDialogOpen(false);
-        setEditingStaff(null);
-        resetForm();
-        fetchStaff();
-      }
-    } catch {
-      toast({ title: "Error", description: "Failed to save", variant: "destructive" });
+      toast({ title: "Success", description: `Staff member ${editingStaff ? "updated" : "created"}` });
+      setIsDialogOpen(false);
+      setEditingStaff(null);
+      resetForm();
+      fetchStaff();
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save", variant: "destructive" });
     }
   };
 
@@ -474,7 +473,6 @@ function StaffPageContent() {
                         <SelectItem value="HOST">Host</SelectItem>
                         <SelectItem value="CHEF">Chef</SelectItem>
                         <SelectItem value="MANAGER">Manager</SelectItem>
-                        <SelectItem value="ADMIN">Admin</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -626,8 +624,10 @@ function StaffPageContent() {
               <CardContent>
                 <div className="text-center py-8 text-muted-foreground">
                   <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Schedule management coming soon</p>
-                  <p className="text-sm">Use the AI Staff Scheduler for optimal scheduling suggestions</p>
+                  <p>Staff schedules are managed in the weekly scheduling planner.</p>
+                  <Button asChild className="mt-4">
+                    <Link href="/scheduling">Open Scheduling</Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -641,7 +641,6 @@ function StaffPageContent() {
                     <TableRow>
                       <TableHead>Employee</TableHead>
                       <TableHead>Position</TableHead>
-                      <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -654,7 +653,6 @@ function StaffPageContent() {
                       >
                         <TableCell className="font-medium">{s.firstName} {s.lastName}</TableCell>
                         <TableCell>{s.position}</TableCell>
-                        <TableCell><Badge variant="outline">Available</Badge></TableCell>
                         <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <Button size="sm" className="mr-2" onClick={() => handleClockIn(s.id)}>
                             <Clock className="h-3 w-3 mr-1" /> Clock In

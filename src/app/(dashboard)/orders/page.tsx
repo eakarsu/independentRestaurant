@@ -2,7 +2,8 @@
 
 import { OrderFinance } from "@/components/operations/order-finance";
 import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,24 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
+interface Modifier {
+  id: string;
+  name: string;
+  priceAdjustment: number;
+  isDefault: boolean;
+}
+
+interface ModifierGroupLink {
+  modifierGroup: {
+    id: string;
+    name: string;
+    required: boolean;
+    minSelect: number;
+    maxSelect: number;
+    modifiers: Modifier[];
+  };
+}
+
 interface MenuItem {
   id: string;
   name: string;
@@ -44,6 +63,7 @@ interface MenuItem {
   category: { id: string; name: string };
   isAvailable: boolean;
   is86d: boolean;
+  modifierGroups?: ModifierGroupLink[];
 }
 
 interface MenuCategory {
@@ -89,10 +109,15 @@ interface CartItem {
   menuItem: MenuItem;
   quantity: number;
   notes: string;
+  selectedModifierIds: string[];
 }
+
+const emptyDeliveryAddress = { address: "", apartmentUnit: "", city: "", state: "", zipCode: "", instructions: "" };
 
 function OrdersPageContent() {
   const mutationFetch = useMutationFetch();
+  const searchParams = useSearchParams();
+  const deepLinkOrderId = searchParams.get("orderId");
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [tables, setTables] = useState<TableData[]>([]);
@@ -105,6 +130,17 @@ function OrdersPageContent() {
   const [activeTab, setActiveTab] = useState("active");
   const [isDetailSheetOpen, setIsDetailSheetOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+
+  // Modifier selection dialog
+  const [modifierItem, setModifierItem] = useState<MenuItem | null>(null);
+  const [modifierSelection, setModifierSelection] = useState<Record<string, string[]>>({});
+
+  // Delivery address for DELIVERY orders
+  const [deliveryAddress, setDeliveryAddress] = useState(emptyDeliveryAddress);
+
+  // Per-tab counts
+  const [activeCount, setActiveCount] = useState(0);
+  const [completedCount, setCompletedCount] = useState(0);
 
   // Pagination state (for completed orders)
   const [currentPage, setCurrentPage] = useState(1);
@@ -128,6 +164,25 @@ function OrdersPageContent() {
     setIsDetailSheetOpen(true);
   };
 
+  // Open the referenced order when arriving from search or the dashboard.
+  useEffect(() => {
+    if (!deepLinkOrderId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`/api/orders/${encodeURIComponent(deepLinkOrderId)}`);
+        if (!response.ok) return;
+        const order = await response.json();
+        if (!cancelled) openOrderDetail(order);
+      } catch {
+        /* the list is still usable without the deep link */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkOrderId]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -136,18 +191,23 @@ function OrdersPageContent() {
         pageSize: pageSize.toString(),
         sortBy,
         sortDirection,
+        scope: activeTab === "completed" ? "completed" : "active",
       });
 
-      const [ordersRes, categoriesRes, tablesRes] = await Promise.all([
+      const [ordersRes, categoriesRes, tablesRes, activeCountRes, completedCountRes] = await Promise.all([
         fetch(`/api/orders?${params}`),
         fetch("/api/menu/categories"),
         fetch("/api/tables"),
+        fetch("/api/orders?scope=active&pageSize=1"),
+        fetch("/api/orders?scope=completed&pageSize=1"),
       ]);
 
-      const [ordersResult, categoriesData, tablesData] = await Promise.all([
+      const [ordersResult, categoriesData, tablesData, activeCountData, completedCountData] = await Promise.all([
         ordersRes.json(),
         categoriesRes.json(),
         tablesRes.json(),
+        activeCountRes.json(),
+        completedCountRes.json(),
       ]);
 
       if (ordersResult.data) {
@@ -160,6 +220,8 @@ function OrdersPageContent() {
         setTotalItems(data.length);
         setTotalPages(1);
       }
+      if (activeCountData?.pagination) setActiveCount(activeCountData.pagination.totalItems);
+      if (completedCountData?.pagination) setCompletedCount(completedCountData.pagination.totalItems);
 
       setCategories(Array.isArray(categoriesData) ? categoriesData : []);
       setTables(Array.isArray(tablesData) ? tablesData : []);
@@ -171,9 +233,14 @@ function OrdersPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, pageSize, sortBy, sortDirection]);
+  }, [currentPage, pageSize, sortBy, sortDirection, activeTab, selectedCategory]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds(new Set());
+  }, [activeTab]);
 
   // Sort handler
   const handleSort = (field: string) => {
@@ -241,22 +308,6 @@ function OrdersPageContent() {
     setCurrentPage(1);
   };
 
-  const addToCart = (item: MenuItem) => {
-    if (item.is86d || !item.isAvailable) {
-      toast({ title: "Item Unavailable", description: "This item is currently not available", variant: "destructive" });
-      return;
-    }
-    setCart((prev) => {
-      const existingIndex = prev.findIndex((cartItem) => cartItem.menuItem.id === item.id);
-      if (existingIndex >= 0) {
-        const updated = [...prev];
-        updated[existingIndex].quantity += 1;
-        return updated;
-      }
-      return [...prev, { menuItem: item, quantity: 1, notes: "" }];
-    });
-  };
-
   const updateCartQuantity = (itemId: string, delta: number) => {
     setCart((prev) => {
       const updated = prev.map((item) => {
@@ -274,10 +325,21 @@ function OrdersPageContent() {
     setCart((prev) => prev.filter((item) => item.menuItem.id !== itemId));
   };
 
+  const modifiersFor = (item: CartItem) => {
+    const all = (item.menuItem.modifierGroups ?? []).flatMap((link) => link.modifierGroup.modifiers);
+    return item.selectedModifierIds
+      .map((id) => all.find((modifier) => modifier.id === id))
+      .filter((modifier): modifier is Modifier => Boolean(modifier));
+  };
+
+  const cartItemUnitPrice = (item: CartItem) =>
+    item.menuItem.price + modifiersFor(item).reduce((sum, modifier) => sum + modifier.priceAdjustment, 0);
+
   const calculateCartTotal = () => {
-    const subtotal = cart.reduce((sum, item) => sum + item.menuItem.price * item.quantity, 0);
-    const tax = subtotal * 0.0875;
-    return { subtotal, tax, total: subtotal + tax };
+    // Tax is quoted by the server during order creation; this preview is
+    // subtotal-only on purpose so it can never disagree with the final total.
+    const subtotal = cart.reduce((sum, item) => sum + cartItemUnitPrice(item) * item.quantity, 0);
+    return { subtotal };
   };
 
   const handleCreateOrder = async () => {
@@ -289,6 +351,10 @@ function OrdersPageContent() {
       toast({ title: "Select Table", description: "Please select a table for dine-in orders", variant: "destructive" });
       return;
     }
+    if (orderType === "DELIVERY" && (!deliveryAddress.address.trim() || !deliveryAddress.city.trim() || !deliveryAddress.state.trim() || !deliveryAddress.zipCode.trim())) {
+      toast({ title: "Delivery address", description: "Street, city, state and ZIP are required for delivery orders", variant: "destructive" });
+      return;
+    }
     try {
       const response = await mutationFetch("/api/orders", {
         method: "POST",
@@ -296,11 +362,23 @@ function OrdersPageContent() {
         body: JSON.stringify({
           type: orderType,
           tableId: orderType === "DINE_IN" ? selectedTable : null,
+          ...(orderType === "DELIVERY"
+            ? {
+                deliveryAddress: {
+                  address: deliveryAddress.address.trim(),
+                  apartmentUnit: deliveryAddress.apartmentUnit.trim() || undefined,
+                  city: deliveryAddress.city.trim(),
+                  state: deliveryAddress.state.trim(),
+                  zipCode: deliveryAddress.zipCode.trim(),
+                  instructions: deliveryAddress.instructions.trim() || undefined,
+                },
+              }
+            : {}),
           items: cart.map((item) => ({
             menuItemId: item.menuItem.id,
             quantity: item.quantity,
-            notes: item.notes,
-            modifierIds: [],
+            notes: item.notes || undefined,
+            modifierIds: item.selectedModifierIds,
           })),
         }),
       });
@@ -309,12 +387,14 @@ function OrdersPageContent() {
         setIsNewOrderDialogOpen(false);
         setCart([]);
         setSelectedTable("");
+        setDeliveryAddress(emptyDeliveryAddress);
         fetchData();
       } else {
-        throw new Error("Failed to create order");
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to create order");
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to create order", variant: "destructive" });
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create order", variant: "destructive" });
     }
   };
 
@@ -414,12 +494,71 @@ function OrdersPageContent() {
     return <Badge variant={config.variant}>{config.label}</Badge>;
   };
 
-  const activeOrders = orders.filter((o) => !["COMPLETED", "CANCELLED"].includes(o.status));
-  const completedOrders = orders.filter((o) => ["COMPLETED", "CANCELLED"].includes(o.status));
+  const activeOrders = activeTab === "active" ? orders : [];
+  const completedOrders = activeTab === "completed" ? orders : [];
   const cartTotals = calculateCartTotal();
 
   const currentCategory = categories.find((c) => c.id === selectedCategory);
   const menuItems = currentCategory?.items.filter((item) => !item.is86d) || [];
+
+  const addToCart = (item: MenuItem, modifierIds: string[] = []) => {
+    if (item.is86d || !item.isAvailable) {
+      toast({ title: "Item Unavailable", description: "This item is currently not available", variant: "destructive" });
+      return;
+    }
+    setCart((prev) => {
+      const existingIndex = prev.findIndex((cartItem) => cartItem.menuItem.id === item.id);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex].quantity += 1;
+        return updated;
+      }
+      return [...prev, { menuItem: item, quantity: 1, notes: "", selectedModifierIds: modifierIds }];
+    });
+  };
+
+  const startAddToCart = (item: MenuItem) => {
+    const groups = (item.modifierGroups ?? []).filter((link) => link.modifierGroup.modifiers.length > 0);
+    if (groups.length === 0) {
+      addToCart(item);
+      return;
+    }
+    const preselected: Record<string, string[]> = {};
+    for (const { modifierGroup } of groups) {
+      preselected[modifierGroup.id] = modifierGroup.modifiers.filter((m) => m.isDefault).map((m) => m.id).slice(0, Math.max(modifierGroup.minSelect, modifierGroup.required ? 1 : 0) || modifierGroup.maxSelect);
+    }
+    setModifierSelection(preselected);
+    setModifierItem(item);
+  };
+
+  const toggleModifier = (groupId: string, modifierId: string, maxSelect: number) => {
+    setModifierSelection((prev) => {
+      const current = prev[groupId] ?? [];
+      const next = current.includes(modifierId)
+        ? current.filter((id) => id !== modifierId)
+        : [...current, modifierId].slice(-Math.max(1, maxSelect));
+      return { ...prev, [groupId]: next };
+    });
+  };
+
+  const confirmModifiers = () => {
+    if (!modifierItem) return;
+    for (const { modifierGroup } of modifierItem.modifierGroups ?? []) {
+      const chosen = (modifierSelection[modifierGroup.id] ?? []).length;
+      const min = Math.max(modifierGroup.minSelect, modifierGroup.required ? 1 : 0);
+      if (chosen < min || chosen > modifierGroup.maxSelect) {
+        toast({
+          title: "Choose options",
+          description: `${modifierGroup.name}: choose ${min}–${modifierGroup.maxSelect}`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    addToCart(modifierItem, Object.values(modifierSelection).flat());
+    setModifierItem(null);
+    setModifierSelection({});
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -475,6 +614,17 @@ function OrdersPageContent() {
                       )}
                     </div>
 
+                    {orderType === "DELIVERY" && (
+                      <div className="grid grid-cols-2 gap-2 mb-4">
+                        <Input className="col-span-2" placeholder="Street address *" value={deliveryAddress.address} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, address: e.target.value })} />
+                        <Input placeholder="Apt/unit" value={deliveryAddress.apartmentUnit} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, apartmentUnit: e.target.value })} />
+                        <Input placeholder="City *" value={deliveryAddress.city} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, city: e.target.value })} />
+                        <Input placeholder="State *" value={deliveryAddress.state} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, state: e.target.value })} />
+                        <Input placeholder="ZIP *" value={deliveryAddress.zipCode} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, zipCode: e.target.value })} />
+                        <Input className="col-span-2" placeholder="Delivery instructions" value={deliveryAddress.instructions} onChange={(e) => setDeliveryAddress({ ...deliveryAddress, instructions: e.target.value })} />
+                      </div>
+                    )}
+
                     <div className="flex gap-2 mb-4 flex-wrap">
                       {categories.map((cat) => (
                         <Button key={cat.id} variant={selectedCategory === cat.id ? "default" : "outline"} size="sm" onClick={() => setSelectedCategory(cat.id)}>
@@ -486,7 +636,7 @@ function OrdersPageContent() {
                     <ScrollArea className="flex-1">
                       <div className="grid grid-cols-2 gap-2 pr-4">
                         {menuItems.map((item) => (
-                          <Card key={item.id} className={`cursor-pointer transition-colors ${!item.isAvailable ? "opacity-50" : "hover:bg-accent"}`} onClick={() => addToCart(item)}>
+                          <Card key={item.id} className={`cursor-pointer transition-colors ${!item.isAvailable ? "opacity-50" : "hover:bg-accent"}`} onClick={() => startAddToCart(item)}>
                             <CardContent className="p-3">
                               <div className="flex justify-between items-start">
                                 <div>
@@ -522,7 +672,10 @@ function OrdersPageContent() {
                                 <div className="flex justify-between items-start mb-2">
                                   <div>
                                     <p className="font-medium">{item.menuItem.name}</p>
-                                    <p className="text-sm text-muted-foreground">{formatCurrency(item.menuItem.price)} each</p>
+                                    <p className="text-sm text-muted-foreground">{formatCurrency(cartItemUnitPrice(item))} each</p>
+                                    {modifiersFor(item).length > 0 && (
+                                      <p className="text-xs text-muted-foreground">{modifiersFor(item).map((m) => m.name).join(", ")}</p>
+                                    )}
                                   </div>
                                   <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeFromCart(item.menuItem.id)}>
                                     <Trash2 className="h-3 w-3" />
@@ -538,7 +691,7 @@ function OrdersPageContent() {
                                       <Plus className="h-3 w-3" />
                                     </Button>
                                   </div>
-                                  <p className="font-bold">{formatCurrency(item.menuItem.price * item.quantity)}</p>
+                                  <p className="font-bold">{formatCurrency(cartItemUnitPrice(item) * item.quantity)}</p>
                                 </div>
                               </CardContent>
                             </Card>
@@ -549,8 +702,8 @@ function OrdersPageContent() {
                     <Separator className="my-4" />
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm"><span>Subtotal</span><span>{formatCurrency(cartTotals.subtotal)}</span></div>
-                      <div className="flex justify-between text-sm"><span>Tax (8.75%)</span><span>{formatCurrency(cartTotals.tax)}</span></div>
-                      <div className="flex justify-between font-bold"><span>Total</span><span>{formatCurrency(cartTotals.total)}</span></div>
+                      <div className="flex justify-between font-bold"><span>Total (before tax)</span><span>{formatCurrency(cartTotals.subtotal)}</span></div>
+                      <p className="text-xs text-muted-foreground">Tax is calculated by the server when the order is created.</p>
                     </div>
                   </div>
                 </div>
@@ -564,10 +717,70 @@ function OrdersPageContent() {
           </div>
         </div>
 
+        {/* Modifier selection dialog */}
+        <Dialog
+          open={Boolean(modifierItem)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setModifierItem(null);
+              setModifierSelection({});
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{modifierItem?.name}</DialogTitle>
+              <DialogDescription>Choose the required options before adding this item.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+              {(modifierItem?.modifierGroups ?? []).map(({ modifierGroup }) => {
+                const min = Math.max(modifierGroup.minSelect, modifierGroup.required ? 1 : 0);
+                const chosen = modifierSelection[modifierGroup.id] ?? [];
+                return (
+                  <div key={modifierGroup.id} className="space-y-2">
+                    <p className="text-sm font-medium">
+                      {modifierGroup.name}
+                      <span className="ml-2 font-normal text-muted-foreground">
+                        choose {min}–{modifierGroup.maxSelect}
+                      </span>
+                    </p>
+                    {modifierGroup.modifiers.map((modifier) => (
+                      <label key={modifier.id} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="flex items-center gap-2">
+                          <Checkbox
+                            checked={chosen.includes(modifier.id)}
+                            onCheckedChange={() => toggleModifier(modifierGroup.id, modifier.id, modifierGroup.maxSelect)}
+                          />
+                          {modifier.name}
+                        </span>
+                        {modifier.priceAdjustment !== 0 && (
+                          <span className="text-muted-foreground">{formatCurrency(modifier.priceAdjustment)}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setModifierItem(null);
+                  setModifierSelection({});
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={confirmModifiers}>Add to Order</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
-            <TabsTrigger value="active">Active Orders ({activeOrders.length})</TabsTrigger>
-            <TabsTrigger value="completed">Completed ({completedOrders.length})</TabsTrigger>
+            <TabsTrigger value="active">Active Orders ({activeCount})</TabsTrigger>
+            <TabsTrigger value="completed">Completed ({completedCount})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="active" className="space-y-4">
@@ -622,7 +835,7 @@ function OrdersPageContent() {
                         {order.status === "READY" && (
                           <Button size="sm" onClick={() => handleUpdateOrderStatus(order.id, "SERVED")}>Serve</Button>
                         )}
-                        {["CONFIRMED", "READY", "SERVED"].includes(order.status) && ["UNPAID", "FAILED"].includes(order.paymentStatus) && (
+                        {["UNPAID", "FAILED", "PAYMENT_PENDING", "AUTHORIZING"].includes(order.paymentStatus) && ["CONFIRMED", "READY", "SERVED", "PAYMENT_PENDING"].includes(order.status) && (
                             <Button size="sm" onClick={() => handlePayOrder(order.id)}>
                               <CreditCard className="mr-1 h-3 w-3" /> Pay Card
                             </Button>
@@ -847,7 +1060,9 @@ function OrdersPageContent() {
 export default function OrdersPage() {
   return (
     <ErrorBoundary>
-      <OrdersPageContent />
+      <Suspense fallback={<div className="p-6 text-muted-foreground">Loading orders…</div>}>
+        <OrdersPageContent />
+      </Suspense>
     </ErrorBoundary>
   );
 }

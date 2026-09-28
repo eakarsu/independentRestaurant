@@ -18,6 +18,13 @@ export async function processNextOutboxEvent(provider: FulfillmentProvider = new
   `;
   const event = lease[0];
   if (!event) return null;
+  // Every terminal write is matched against the lease this worker claimed, so
+  // a worker whose lease expired cannot overwrite the newer worker's outcome.
+  const leaseGuard = {
+    id: event.id,
+    status: "PROCESSING" as const,
+    ...(event.leasedUntil ? { leasedUntil: event.leasedUntil } : {}),
+  };
   try {
     if (event.topic !== "delivery.schedule" || !event.orderId) throw new Error(`Unsupported outbox topic ${event.topic}`);
     const order = await prisma.order.findUniqueOrThrow({ where: { id: event.orderId }, include: { delivery: true } });
@@ -34,15 +41,19 @@ export async function processNextOutboxEvent(provider: FulfillmentProvider = new
         zipCode: order.delivery.zipCode,
       },
     });
-    await prisma.$transaction([
-      prisma.deliveryInfo.update({ where: { orderId: order.id }, data: { platform: "configured-fulfillment-provider", platformOrderId: result.providerRef } }),
-      prisma.outboxEvent.update({ where: { id: event.id }, data: { status: "SUCCEEDED", processedAt: new Date(), leasedUntil: null, lastError: null } }),
-    ]);
-    return { id: event.id, status: "SUCCEEDED" as const };
+    return await prisma.$transaction(async (tx) => {
+      const claimed = await tx.outboxEvent.updateMany({
+        where: leaseGuard,
+        data: { status: "SUCCEEDED", processedAt: new Date(), leasedUntil: null, lastError: null },
+      });
+      if (!claimed.count) return { id: event.id, status: "SUCCEEDED" as const, leaseLost: true };
+      await tx.deliveryInfo.update({ where: { orderId: order.id }, data: { platform: "configured-fulfillment-provider", platformOrderId: result.providerRef } });
+      return { id: event.id, status: "SUCCEEDED" as const };
+    });
   } catch (error) {
     const dead = event.attempts >= 8;
-    await prisma.outboxEvent.update({
-      where: { id: event.id },
+    const released = await prisma.outboxEvent.updateMany({
+      where: leaseGuard,
       data: {
         status: dead ? "DEAD_LETTER" : "PENDING",
         leasedUntil: null,
@@ -50,6 +61,6 @@ export async function processNextOutboxEvent(provider: FulfillmentProvider = new
         lastError: error instanceof Error ? error.message : "Unknown provider error",
       },
     });
-    return { id: event.id, status: dead ? "DEAD_LETTER" as const : "PENDING" as const };
+    return { id: event.id, status: dead ? ("DEAD_LETTER" as const) : ("PENDING" as const), leaseLost: !released.count };
   }
 }

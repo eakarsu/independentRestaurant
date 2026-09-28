@@ -5,8 +5,12 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   const headers = { 'Cache-Control': 'no-store, private' }
   // A deployed instance may enable autofill for its own demo host. When it
-  // does, the credentials served are the DEMO_* ones only — never the real
-  // admin, which this endpoint would otherwise hand to any visitor.
+  // does, the credentials served are the DEMO_* ones only.
+  //
+  // In non-production, loopback requests receive the configured local
+  // administrator credentials so the workspace autofill can sign in. That is
+  // intentional for local development; production only serves DEMO_* variables
+  // and only for hosts explicitly listed in DEMO_AUTOFILL_HOSTS.
   const demoHosts = (process.env.DEMO_AUTOFILL_HOSTS || '')
     .split(',')
     .map((h) => h.trim().toLowerCase())
