@@ -289,6 +289,31 @@ function ReservationsPageContent() {
     }
   };
 
+  const handlePermanentDelete = async (id: string) => {
+    if (!window.confirm("Permanently delete this reservation? This cannot be undone.")) return;
+    try {
+      const response = await mutationFetch(`/api/reservations/${id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          version: reservations.find((r) => r.id === id)?.version ?? detailReservation?.version,
+          reason: "Deleted by restaurant operator",
+          permanent: true,
+        }),
+      });
+      if (response.ok) {
+        toast({ title: "Deleted", description: "Reservation permanently deleted" });
+        setIsReservationDetailOpen(false);
+        fetchData();
+      } else {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Failed to delete reservation");
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete reservation", variant: "destructive" });
+    }
+  };
+
   const handleCreateTable = async () => {
     try {
       const response = await mutationFetch("/api/tables", {
@@ -452,7 +477,7 @@ function ReservationsPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Reservations" />
-      <div className="flex-1 p-6 space-y-6 overflow-auto">
+      <div className="flex-1 p-6 space-y-6 overflow-auto mx-auto w-full max-w-7xl">
         <Tabs defaultValue="reservations" className="space-y-4">
           <div className="flex items-center justify-between">
             <TabsList>
@@ -748,6 +773,14 @@ function ReservationsPageContent() {
                                 title="Cancel"
                               >
                                 <XCircle className="h-4 w-4 text-red-600" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handlePermanentDelete(reservation.id)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4 text-red-700" />
                               </Button>
                             </div>
                           </TableCell>
@@ -1133,6 +1166,9 @@ function ReservationsPageContent() {
                   </Button>
                   <Button size="sm" variant="destructive" onClick={() => { handleUpdateReservationStatus(detailReservation.id, "CANCELLED"); setIsReservationDetailOpen(false); }}>
                     <XCircle className="mr-1 h-3 w-3" /> Cancel
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => handlePermanentDelete(detailReservation.id)}>
+                    <Trash2 className="mr-1 h-3 w-3" /> Delete
                   </Button>
                 </DialogFooter>
               </>

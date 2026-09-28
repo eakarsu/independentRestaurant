@@ -15,6 +15,13 @@ const demoNote = 'DEMO — fictional evaluation data. No real service, approval,
 const names = ['Avery','Jordan','Taylor','Casey','Riley','Morgan','Alex','Jamie','Cameron','Drew','Reese','Quinn','Skyler','Rowan','Emerson'];
 const stamp = (days = 0, hour = 10) => { const d = new Date(); d.setDate(d.getDate()+days); d.setHours(hour,0,0,0); return d; };
 const key = (kind, i) => `demo-${kind}-${String(i+1).padStart(3,'0')}`;
+// Mirror src/lib/commerce/crypto.ts so seeded OrderEvent rows form a valid chain.
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
+  return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalize(value[k])}`).join(',')}}`;
+}
+const auditHash = input => createHash('sha256').update(canonicalize(input)).digest('hex');
 const touched = new Set();
 async function insert(tx, model, id, data) {
   touched.add(model);
@@ -91,6 +98,93 @@ async function seed(tx, admin, accountPassword) {
     await insert(tx,'promotion',key('restaurant-promo',i),{name:`Demo offer ${i+1}`,description:demoNote,code:`DEMO-OFFER-${i+1}`,type:'PERCENTAGE',value:10,startDate:stamp(),endDate:stamp(30),isActive:false,applicableTo:[],dayOfWeek:[]});
     await insert(tx,'notificationTemplate',key('restaurant-template',i),{name:`Demo message template ${i+1}`,type:'CUSTOM',channel:'EMAIL',subject:'Demo customer message',content:demoNote,isActive:false});
     await insert(tx,'location',key('restaurant-location',i),{name:`Demo dining location ${i+1}`,code:`DEMO-${i+1}`,address:`${100+i} Example Lane`,city:'Demo City',state:'GA',zipCode:'30301'});
+  }
+  await seedTopUps(tx, admin);
+}
+
+// Top up every user-facing table to at least 15 rows so each screen has content.
+// All ids are deterministic and rows are only created (never overwritten), so
+// reloading stays idempotent and existing edits are preserved.
+async function seedTopUps(tx, admin) {
+  const now = new Date();
+  const dayKey = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  for (let i=0;i<15;i++) {
+    const staffId = key('restaurant-staff',i), customerId = key('restaurant-customer',i), itemId = key('restaurant-menu',i), orderId = key('restaurant-order',i), ingredientId = key('restaurant-ingredient',i), loyaltyId = key('restaurant-loyalty',i);
+
+    // Modifiers and their menu-item links.
+    const groupId = key('restaurant-modifier-group',i), modifierId = key('restaurant-modifier',i);
+    await insert(tx,'modifierGroup',groupId,{name:`Demo choice group ${i+1}`,required:i<3,minSelect:i<3?1:0,maxSelect:1});
+    await insert(tx,'modifier',modifierId,{groupId,name:`Demo option ${i+1}`,priceAdjustment:i%3,isDefault:i%5===0,isAvailable:true});
+    await insert(tx,'menuItemModifierGroup',key('restaurant-menu-modifier',i),{menuItemId:itemId,modifierGroupId:groupId});
+    await insert(tx,'orderItemModifier',key('restaurant-order-item-modifier',i),{orderItemId:key('restaurant-order-line',i),modifierId,priceAdjustment:i%3});
+
+    // Today's reservations so the default date view is populated.
+    const when = new Date(); when.setHours(17+(i%5),(i%2)*30,0,0);
+    await insert(tx,'reservation',`demo-restaurant-reservation-${dayKey}-${String(i+1).padStart(3,'0')}`,{customerId,customerName:`${names[i]} (Today Demo)`,customerPhone:`202-555-02${String(i).padStart(2,'0')}`,partySize:2+(i%6),date:when,time:when,tableId:key('restaurant-table',i),notes:demoNote,status:'PENDING',source:'demo'});
+
+    // Payments, attempts and refunds (all terminal states; nothing chargeable).
+    await insert(tx,'payment',key('restaurant-payment',i),{orderId,amount:20+i,method:'card',reference:`demo-payment-ref-${i+1}`,status:'completed'});
+    await insert(tx,'paymentAttempt',key('restaurant-payment-attempt',i),{orderId,provider:'stripe',providerRef:`demo-attempt-ref-${i+1}`,idempotencyKey:`demo-attempt-key-${i+1}`,amountCents:(20+i)*100,currency:'USD',status:'SUCCEEDED',resumeStatus:'PREPARING'});
+    await insert(tx,'refund',key('restaurant-refund',i),{orderId,provider:'stripe',providerRef:`demo-refund-ref-${i+1}`,idempotencyKey:`demo-refund-key-${i+1}`,amountCents:500+i*100,currency:'USD',reason:'Demo refund for screen review',status:'SUCCEEDED',requestedById:admin.id,completedAt:new Date()});
+
+    // Inventory reservations (released) with their lines.
+    const reservationId = key('restaurant-inventory-reservation',i);
+    await insert(tx,'inventoryReservation',reservationId,{orderId,provider:'internal-postgres',providerRef:orderId,idempotencyKey:`demo-inventory-key-${i+1}`,status:'RELEASED',releasedAt:new Date()});
+    await insert(tx,'inventoryReservationLine',key('restaurant-inventory-line',i),{reservationId,ingredientId,quantity:1});
+
+    // Split checks with one item each.
+    const splitId = key('restaurant-split',i);
+    await insert(tx,'splitCheck',splitId,{orderId,guestName:`${names[i]} Demo`,guestNumber:i+1,subtotal:10+i,tax:1,tip:2,total:13+i,isPaid:true,paidAt:new Date(),paymentMethod:'card'});
+    await insert(tx,'splitCheckItem',key('restaurant-split-item',i),{splitCheckId:splitId,orderItemId:key('restaurant-order-line',i),quantity:1,amount:10+i});
+
+    // Workforce history.
+    const clockIn = stamp(-1,9), clockOut = stamp(-1,17);
+    await insert(tx,'timeClock',key('restaurant-timeclock',i),{staffId,clockIn,clockOut,totalHours:7.5,breakMinutes:30,approvedById:admin.id,approvedAt:clockOut});
+    await insert(tx,'tipDistribution',key('restaurant-tip',i),{staffId,date:stamp(-i),amount:10+i,source:'card'});
+    await insert(tx,'tipFairnessReport',key('restaurant-tip-report',i),{periodStart:stamp(-7),periodEnd:stamp(),giniIndex:0.1+i/100,flagged:[],summary:demoNote});
+    await insert(tx,'performanceRecord',key('restaurant-performance',i),{staffId,date:stamp(-i),metric:'Demo review score',value:3+i%5,notes:demoNote});
+    await insert(tx,'stockMovement',key('restaurant-stock-movement',i),{ingredientId,type:'USED',quantity:1,reason:'Demo stock movement',reference:'DEMO'});
+
+    // Integrations and their logs.
+    const integrationId = key('restaurant-integration',i);
+    await insert(tx,'integration',integrationId,{type:'pos',name:`Demo integration ${i+1}`,isActive:false});
+    await insert(tx,'integrationLog',key('restaurant-integration-log',i),{integrationId,action:'demo.sync',status:'success',message:demoNote});
+
+    // AI and reporting surfaces.
+    await insert(tx,'aIRecommendation',key('restaurant-ai-recommendation',i),{type:'menu_price',title:`Demo recommendation ${i+1}`,description:demoNote,status:'pending'});
+    await insert(tx,'aiResult',key('restaurant-ai-result',i),{feature:'demo_review',refType:'MenuItem',refId:itemId,userId:admin.id,model:'demo-model',input:{demo:true},output:{demo:true}});
+    await insert(tx,'demandForecast',key('restaurant-demand',i),{date:stamp(i),dayOfWeek:stamp(i).getDay(),hour:12+(i%10),predictedCovers:20+i,predictedRevenue:200+i*10,confidence:0.5});
+    await insert(tx,'salesReport',key('restaurant-sales-report',i),{date:stamp(-i),totalOrders:10+i,totalRevenue:500+i*20,totalTax:40,totalTips:30,totalDiscount:5,avgOrderValue:45});
+    await insert(tx,'dynamicPriceSuggestion',key('restaurant-price-suggestion',i),{menuItemId:itemId,oldPrice:10+i,suggestedPrice:11+i,reason:demoNote,signals:{demo:true},status:'pending'});
+    await insert(tx,'noShowRiskScore',key('restaurant-no-show',i),{customerId,customerName:`${names[i]} Demo`,customerPhone:`202-555-02${String(i).padStart(2,'0')}`,totalReservations:5,noShowCount:i%3,cancellationCount:i%2,riskScore:i/20,riskBand:'low',rationale:demoNote});
+    await insert(tx,'conciergeMessage',key('restaurant-concierge',i),{channel:'sms',direction:'inbound',fromNumber:`+1555000${String(i).padStart(4,'0')}`,toNumber:'+15559990000',body:demoNote,intent:'info',status:'received'});
+    await insert(tx,'restaurantAiRun',key('restaurant-ai-run',i),{actorId:admin.id,feature:'demo_summary',status:'DRAFT',instructions:demoNote,sources:[],sourceHash:createHash('sha256').update(`demo-run-${i}`).digest('hex'),output:{demo:true},model:'demo-model',costUsd:0.01});
+    await insert(tx,'restaurantKnowledge',key('restaurant-knowledge',i),{title:`Demo knowledge ${i+1}`,content:demoNote,authorId:admin.id,approvedById:admin.id,approvedAt:new Date(),active:true});
+    await insert(tx,'customerLead',key('restaurant-lead',i),{sessionId:`demo-session-${i+1}`,name:`${names[i]} Lead`,email:`demo.lead.${i+1}@example.invalid`,phone:`202-555-03${String(i).padStart(2,'0')}`,note:demoNote,source:'demo'});
+    await insert(tx,'loyaltyTransaction',key('restaurant-loyalty-tx',i),{loyaltyId,points:50+i,type:'earned',description:'Demo points history'});
+
+    // Terminal notification/outbox/webhook evidence (never PENDING, so workers skip them).
+    await insert(tx,'notification',key('restaurant-notification',i),{type:'ORDER_CONFIRMATION',channel:'EMAIL',recipient:`demo.customer.${i+1}@example.invalid`,subject:'Demo notification',message:demoNote,status:'DELIVERED',sentAt:new Date(),deliveredAt:new Date(),consentRecorded:true,provider:'resend',providerRef:`demo-provider-ref-${i+1}`,deliveryKey:`demo-delivery-${i+1}`,createdById:admin.id});
+    await insert(tx,'outboxEvent',key('restaurant-outbox',i),{orderId,topic:'delivery.schedule',idempotencyKey:`demo-outbox-${i+1}`,payload:{demo:true},status:'SUCCEEDED',attempts:1,processedAt:new Date()});
+    await insert(tx,'webhookEvent',key('restaurant-webhook',i),{provider:'stripe',eventId:`demo-event-${i+1}`,eventType:'demo.event',payloadHash:`demo-payload-hash-${i+1}`,status:'PROCESSED',attempts:1,processedAt:new Date()});
+    await insert(tx,'passwordResetToken',key('restaurant-reset',i),{userId:key('restaurant-user',i),tokenHash:createHash('sha256').update(`demo-reset-${i}`).digest('hex'),expiresAt:stamp(-1)});
+    await insert(tx,'session',key('restaurant-session',i),{sessionToken:`demo-session-token-${i+1}`,userId:key('restaurant-user',i),expires:stamp(30)});
+    await insert(tx,'settings',key('restaurant-setting',i),{key:`demo-setting-${i+1}`,value:{demo:true,index:i+1}});
+    await insert(tx,'operationAudit',key('restaurant-operation-audit',i),{actorId:admin.id,action:'DEMO_TOPUP',entity:'Demo',entityId:`demo-${i+1}`,details:{demo:true}});
+    await insert(tx,'operationReceipt',key('restaurant-operation-receipt',i),{actorId:admin.id,operation:'demo.topup',requestHash:`demo-hash-${i+1}`,response:{demo:true}});
+  }
+
+  // A dedicated demo order with a valid hash-chained event history.
+  const auditOrderId = 'demo-topup-audit-order';
+  await insert(tx,'order',auditOrderId,{orderNumber:'DEMO-AUDIT-ORDER',type:'DINE_IN',status:'CONFIRMED',subtotal:0,total:0,paymentStatus:'UNPAID',source:'demo',notes:demoNote});
+  let previousHash = null;
+  for (let i=0;i<15;i++) {
+    const sequence = i+1;
+    const payload = {demo:true,step:sequence};
+    const fields = {orderId:auditOrderId,sequence,type:'DEMO_EVENT',fromStatus:null,toStatus:null,actorUserId:admin.id,actorRole:'ADMIN',idempotencyKey:`demo-audit-event-${sequence}`,payload,previousHash};
+    const hash = auditHash(fields);
+    await insert(tx,'orderEvent',`demo-topup-orderevent-${String(sequence).padStart(3,'0')}`,{...fields,hash});
+    previousHash = hash;
   }
 }
 
