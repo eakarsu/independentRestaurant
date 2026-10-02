@@ -40,6 +40,9 @@ function LoginForm() {
       if (!credentials.email || !credentials.password) throw new Error("Demo credentials unavailable");
       setEmail(credentials.email);
       setPassword(credentials.password);
+      const __demo = await signIn('credentials', { email: credentials.email, password: credentials.password, redirect: false });
+      if (__demo?.error) { setError('Invalid email or password'); return; }
+      window.location.assign('/');
     } catch {
       setError("Demo credentials are unavailable");
     } finally {
