@@ -125,12 +125,12 @@ function LoginForm() {
 
           {demoEnabled && <button
             type="button"
-            onClick={fillDemoCredentials}
+            onClick={async () => { await (fillDemoCredentials)(); window.setTimeout(() => { const form = document.querySelector("form"); if (form) form.requestSubmit(); }, 150); }}
             disabled={demoLoading || loading}
-            aria-label="Auto Fill Demo Credentials"
+            aria-label="Log In as Demo"
             style={{ width: '100%', marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', border: '1px solid currentColor', background: 'transparent', cursor: 'pointer' }}
           >
-            {demoLoading ? "Loading Demo Credentials…" : "Auto Fill Demo Credentials"}
+            {demoLoading ? "Loading Demo Credentials…" : "Log In as Demo"}
           </button>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (

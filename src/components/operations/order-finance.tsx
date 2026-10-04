@@ -11,28 +11,49 @@ type Receipt = {
   providerRef: string | null;
   failureMessage?: string;
   reason?: string;
+  provider?: string;
 };
+type CapturedPayment = { id: string; amount: number; method: string; status: string; reference: string | null };
 type Data = {
   canRefund: boolean;
+  canRecordCash?: boolean;
+  checkoutEnabled?: boolean;
+  splitCheckoutEnabled?: boolean;
+  totalCents?: number;
+  capturedCashCents?: number;
+  capturedCardCents?: number;
+  refundedCashCents?: number;
   order: {
     status: string;
     paymentStatus: string;
     lastError: string | null;
     paymentAttempts: Receipt[];
     refunds: Receipt[];
+    payments?: CapturedPayment[];
   };
 };
-export function OrderFinance({ orderId }: { orderId: string }) {
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+const inputCents = (value: string) => {
+  if (!/^\d+(?:\.\d{1,2})?$/.test(value)) return null;
+  const cents = Math.round(Number(value) * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
+};
+export function OrderFinance({ orderId, guest = false }: { orderId: string; guest?: boolean }) {
+  const endpoint = guest ? `/api/online-ordering/guest/orders/${orderId}/finance` : `/api/orders/${orderId}/finance`;
   const [data, setData] = useState<Data | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [reference, setReference] = useState(""),
     [amount, setAmount] = useState(""),
-    [reason, setReason] = useState("");
+    [reason, setReason] = useState(""),
+    [cashAmount, setCashAmount] = useState(''),
+    [cashReceived, setCashReceived] = useState(''),
+    [cashRefundAmount, setCashRefundAmount] = useState(''),
+    [cashRefundReason, setCashRefundReason] = useState('');
   const mutate = useMutationFetch();
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`/api/orders/${orderId}/finance`),
+      const r = await fetch(endpoint),
         j = await r.json();
       if (!r.ok) throw Error(j.error);
       setData(j);
@@ -40,7 +61,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Receipts unavailable");
     }
-  }, [orderId]);
+  }, [endpoint]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -49,7 +70,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
     setBusy(true);
     setError("");
     try {
-      const r = await mutate(`/api/orders/${orderId}/finance`, {
+      const r = await mutate(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -60,6 +81,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
         const url = new URL(j.redirectUrl);
         if (url.protocol !== "https:" || url.hostname !== "checkout.stripe.com")
           throw Error("Unexpected payment destination");
+        if (guest) window.sessionStorage.setItem('restaurant-guest-payment-order', orderId);
         window.location.assign(url.href);
       }
       await load();
@@ -71,7 +93,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
   }
   return (
     <section className="border rounded p-3 space-y-3">
-      <h3 className="font-semibold">Payments and refunds</h3>
+      <h3 className="font-semibold">{guest ? 'Card checkout and receipts' : 'Payments and refunds'}</h3>
       {error && (
         <p role="alert" className="text-red-700">
           {error}
@@ -83,6 +105,10 @@ export function OrderFinance({ orderId }: { orderId: string }) {
       {data && (
         <>
           <p>{data.order.paymentStatus}</p>
+          {typeof data.totalCents === 'number' && <p className="text-sm">Order total {money(data.totalCents)} · cash collected {money(data.capturedCashCents || 0)} · verified card {money(data.capturedCardCents || 0)} · card balance {money(Math.max(0, data.totalCents - (data.capturedCashCents || 0) - (data.capturedCardCents || 0)))}</p>}
+          {!!data.refundedCashCents && <p className="text-sm">Cash returned {money(data.refundedCashCents)}</p>}
+          {guest && data.checkoutEnabled === false && <p className="text-sm text-amber-700">Guest card checkout is not yet enabled. Ask the restaurant how to pay after it accepts the order.</p>}
+          {!guest && (data.capturedCashCents || 0) > 0 && data.splitCheckoutEnabled === false && <p className="text-sm text-amber-700">Split card checkout awaits accepted Stripe test-mode credentials and a signed webhook.</p>}
           {data.order.lastError && <p>{data.order.lastError}</p>}
           <p className="text-sm">
             A checkout return does not confirm payment. Pending or unknown
@@ -97,6 +123,8 @@ export function OrderFinance({ orderId }: { orderId: string }) {
             "SERVED",
             "COMPLETED",
           ].includes(data.order.status) &&
+            (!guest || data.checkoutEnabled !== false) &&
+            (!data.capturedCashCents || data.splitCheckoutEnabled !== false) &&
             !["PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(
               data.order.paymentStatus,
             ) && (
@@ -108,6 +136,15 @@ export function OrderFinance({ orderId }: { orderId: string }) {
                 Open or resume card checkout
               </Button>
             )}
+          {!guest && data.canRecordCash && <div className="space-y-2 rounded border p-3 text-sm">
+            <p className="font-medium">Split cash and card</p>
+            {data.splitCheckoutEnabled ? <><p>Record cash actually received. Card checkout will charge the remaining server-priced balance.</p>
+              <label className="block">Cash applied to order<Input type="number" min="0.01" step="0.01" value={cashAmount} onChange={event => setCashAmount(event.target.value)} /></label>
+              <label className="block">Cash handed over<Input type="number" min="0.01" step="0.01" value={cashReceived} onChange={event => setCashReceived(event.target.value)} /></label>
+              <Button size="sm" disabled={busy || inputCents(cashAmount) === null || inputCents(cashReceived) === null || inputCents(cashAmount)! <= 0 || inputCents(cashAmount)! >= (data.totalCents || 0) || inputCents(cashReceived)! < inputCents(cashAmount)!} onClick={() => { if (window.confirm(`Confirm ${cashAmount} cash applied to this order?`)) void act({ action: 'cash', amountCents: inputCents(cashAmount), cashReceivedCents: inputCents(cashReceived), confirmed: true }); }}>Record cash portion</Button>
+            </> : <p>Cash split is available after the Stripe test-mode checkout and webhook are accepted.</p>}
+          </div>}
+          {data.order.payments?.filter(payment => payment.status === 'completed').map(payment => <p className="text-sm" key={payment.id}>{payment.method === 'cash' ? 'Cash receipt' : 'Card receipt'} {money(Math.round(payment.amount * 100))} · {payment.reference}</p>)}
           {[
             ...data.order.paymentAttempts.map((r) => ({
               ...r,
@@ -138,6 +175,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
                   </Button>
                 )}
               {r.kind === "payment" &&
+                (!guest || data.checkoutEnabled !== false) &&
                 r.providerRef?.startsWith("cs_") &&
                 r.status !== "SUCCEEDED" && (
                   <Button
@@ -152,7 +190,7 @@ export function OrderFinance({ orderId }: { orderId: string }) {
                 )}
             </div>
           ))}
-          <label className="block text-sm">
+          {!guest && <><label className="block text-sm">
             Provider checkout or refund ID
             <Input
               value={reference}
@@ -188,7 +226,8 @@ export function OrderFinance({ orderId }: { orderId: string }) {
               Expire checkout
             </Button>
           </div>
-          {data.canRefund && (
+          </>}
+          {data.canRefund && (data.capturedCardCents || 0) > 0 && ['COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(data.order.status) && (
             <details>
               <summary>Request original-card refund</summary>
               <label className="block text-sm">
@@ -229,6 +268,12 @@ export function OrderFinance({ orderId }: { orderId: string }) {
               </Button>
             </details>
           )}
+          {!guest && data.canRefund && ['COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(data.order.status) && (data.capturedCashCents || 0) > (data.refundedCashCents || 0) && <details className="space-y-2"><summary>Record original cash refund</summary>
+            <p className="text-sm">Up to {money((data.capturedCashCents || 0) - (data.refundedCashCents || 0))} can be returned from the recorded cash portion.</p>
+            <label className="block text-sm">Cash returned<Input type="number" min="0.01" step="0.01" value={cashRefundAmount} onChange={event => setCashRefundAmount(event.target.value)} /></label>
+            <label className="block text-sm">Reason<Input value={cashRefundReason} onChange={event => setCashRefundReason(event.target.value)} /></label>
+            <Button size="sm" disabled={busy || !inputCents(cashRefundAmount) || inputCents(cashRefundAmount)! > (data.capturedCashCents || 0) - (data.refundedCashCents || 0) || cashRefundReason.trim().length < 3} onClick={() => { if (window.confirm('Confirm this cash was actually returned to the customer?')) void act({ action: 'cash-refund', amountCents: inputCents(cashRefundAmount), reason: cashRefundReason, cashReturnedConfirmed: true }); }}>Record cash returned</Button>
+          </details>}
         </>
       )}
     </section>

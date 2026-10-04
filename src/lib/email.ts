@@ -33,3 +33,10 @@ export async function sendPasswordResetEmail(email: string, token: string): Prom
     text: `Use this one-time link within 30 minutes: ${url.toString()}`,
   });
 }
+
+export async function sendGuestCheckoutCode(email: string, code: string): Promise<void> {
+  const resend = getResend();
+  if (!resend || !process.env.RESEND_FROM_EMAIL || process.env.GUEST_CHECKOUT_EMAIL_SANDBOX_ACCEPTED !== 'true') throw new Error('Guest email provider is unavailable');
+  const result = await resend.emails.send({ from: FROM_EMAIL, to: email, subject: `${RESTAURANT_NAME} pickup verification code`, text: `Your one-time restaurant pickup code is ${code}. It expires in 10 minutes.` });
+  if (result.error || !result.data?.id) throw new Error('Guest verification email was not accepted');
+}

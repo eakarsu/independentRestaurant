@@ -24,6 +24,27 @@ model User {
   sessions        Session[]
   orderEvents     OrderEvent[]
   resetTokens     PasswordResetToken[]
+  guestCheckoutChallenges GuestCheckoutChallenge[]
+}
+
+model GuestCheckoutChallenge {
+  id             String   @id @default(cuid())
+  email          String
+  firstName      String
+  lastName       String
+  phone          String?
+  codeHash       String
+  expiresAt      DateTime
+  attempts       Int      @default(0)
+  verifiedAt     DateTime?
+  tokenHash      String?  @unique
+  tokenExpiresAt DateTime?
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([userId, tokenExpiresAt])
 }
 
 model PasswordResetToken {

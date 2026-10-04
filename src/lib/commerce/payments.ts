@@ -13,6 +13,8 @@ import {
   type PaymentProvider,
   type RefundReceipt,
 } from "./providers";
+import { splitStripeSandboxReady } from './guest-payment';
+import { receiptCents, refundedPaymentStatus, splitTenderBalance } from './split-tender';
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -75,6 +77,30 @@ function validKey(key: string) {
   if (!/^[\w][\w.:-]{7,127}$/.test(key))
     throw new CommerceValidationError("Use an 8–128 character idempotency key");
 }
+const CASH_TENDER_ROLES = ['ADMIN', 'MERCHANT', 'MANAGER', 'OPERATOR', 'STAFF', 'HOST'];
+async function reviewedTotalCents(tx: Prisma.TransactionClient, order: { id: string; total: number }) {
+  const totalCents = receiptCents(order.total);
+  const pricing = await tx.orderEvent.findFirst({ where: { orderId: order.id, type: 'ORDER_CREATED' } });
+  const snapshot = pricing?.payload as { totalCents?: number; taxReference?: string } | undefined;
+  if (totalCents <= 0 || snapshot?.totalCents !== totalCents || !snapshot.taxReference)
+    throw new CommerceConflictError('This order has no matching server pricing and tax receipt. Reconcile it before payment.');
+  return totalCents;
+}
+async function cashReceipt(tx: Prisma.TransactionClient, orderId: string) {
+  const cash = await tx.payment.findMany({ where: { orderId, status: 'completed', method: { equals: 'cash', mode: 'insensitive' } } });
+  if (cash.length > 1 || cash.some(row => !row.reference?.startsWith('cash:')))
+    throw new CommerceConflictError('Cash tender requires receipt reconciliation');
+  if (cash[0]) {
+    const event = await tx.orderEvent.findUnique({ where: { orderId_idempotencyKey: { orderId, idempotencyKey: cash[0].reference! } } });
+    if (event?.type !== 'CASH_TENDER_COLLECTED' || (event.payload as { paymentId?: string }).paymentId !== cash[0].id)
+      throw new CommerceConflictError('Cash receipt has no matching audit event');
+  }
+  return cash[0] || null;
+}
+async function capturedTenderCents(tx: Prisma.TransactionClient, orderId: string) {
+  const rows = await tx.payment.findMany({ where: { orderId, status: 'completed' } });
+  return rows.reduce((sum, row) => sum + receiptCents(row.amount), 0);
+}
 async function payableOrder(orderId: string, actor: Actor) {
   if (!(ORDER_WRITE_ROLES as readonly string[]).includes(actor.role))
     throw new AuthorizationError("Billing role required");
@@ -88,6 +114,38 @@ async function payableOrder(orderId: string, actor: Actor) {
       "A customer cannot pay another customer's order",
     );
   return order;
+}
+export async function recordCashTender(input: { orderId: string; actor: Actor; idempotencyKey: string; amountCents: number; cashReceivedCents: number }) {
+  if (!CASH_TENDER_ROLES.includes(input.actor.role)) throw new AuthorizationError('Cash tender requires restaurant staff');
+  validKey(input.idempotencyKey);
+  if (![input.amountCents, input.cashReceivedCents].every(Number.isSafeInteger) || input.amountCents <= 0 || input.cashReceivedCents < input.amountCents || input.cashReceivedCents > 100_000_000)
+    throw new CommerceValidationError('Enter the cash amount and actual cash received in cents');
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${input.orderId} FOR UPDATE`;
+    const order = await tx.order.findUnique({ where: { id: input.orderId } });
+    if (!order) throw new CommerceValidationError('Order not found');
+    const eventKey = `cash:${input.idempotencyKey}`;
+    const prior = await tx.orderEvent.findUnique({ where: { orderId_idempotencyKey: { orderId: order.id, idempotencyKey: eventKey } } });
+    if (prior) {
+      const payload = prior.payload as { amountCents?: number; cashReceivedCents?: number; paymentId?: string };
+      if (prior.actorUserId !== input.actor.userId || payload.amountCents !== input.amountCents || payload.cashReceivedCents !== input.cashReceivedCents || !payload.paymentId)
+        throw new CommerceConflictError('Cash request key was used for different tender');
+      const payment = await tx.payment.findUniqueOrThrow({ where: { id: payload.paymentId } });
+      if (payment.orderId !== order.id || payment.reference !== eventKey || payment.method !== 'cash' || payment.status !== 'completed' || receiptCents(payment.amount) !== input.amountCents)
+        throw new CommerceConflictError('Saved cash receipt requires reconciliation');
+      return { payment, cardBalanceCents: (await reviewedTotalCents(tx, order)) - input.amountCents, changeCents: input.cashReceivedCents - input.amountCents };
+    }
+    if (await tx.paymentAttempt.count({ where: { orderId: order.id } }) || await tx.payment.count({ where: { orderId: order.id, status: 'completed' } }))
+      throw new CommerceConflictError('Tender already started; reconcile it before changing the cash portion');
+    if (!['CONFIRMED', 'PREPARING', 'READY', 'SERVED'].includes(order.status) || !['UNPAID', 'FAILED'].includes(order.paymentStatus))
+      throw new CommerceConflictError('Cash split requires an accepted unpaid order');
+    const totalCents = await reviewedTotalCents(tx, order);
+    if (input.amountCents >= totalCents) throw new CommerceValidationError('Cash portion must be less than the server-priced order total');
+    const payment = await tx.payment.create({ data: { orderId: order.id, amount: input.amountCents / 100, method: 'cash', reference: eventKey, status: 'completed' } });
+    await tx.order.update({ where: { id: order.id }, data: { paymentStatus: 'PARTIAL', paymentMethod: 'cash+card', version: { increment: 1 } } });
+    await appendPaymentEvent(tx, { orderId: order.id, type: 'CASH_TENDER_COLLECTED', actor: input.actor, idempotencyKey: eventKey, payload: { paymentId: payment.id, amountCents: input.amountCents, cashReceivedCents: input.cashReceivedCents, changeCents: input.cashReceivedCents - input.amountCents } });
+    return { payment, cardBalanceCents: totalCents - input.amountCents, changeCents: input.cashReceivedCents - input.amountCents };
+  });
 }
 export async function beginPayment(
   input: { orderId: string; idempotencyKey: string; actor: Actor },
@@ -140,21 +198,16 @@ export async function beginPayment(
     const prior = await tx.paymentAttempt.findFirst({
         where: { orderId: order.id },
         orderBy: { createdAt: "desc" },
-      }),
-      amountCents = Math.round(locked.total * 100);
-    if (!Number.isSafeInteger(amountCents) || amountCents <= 0)
-      throw new CommerceValidationError(
-        "A positive reviewed order total is required",
-      );
-    const pricing = await tx.orderEvent.findFirst({
-        where: { orderId: order.id, type: "ORDER_CREATED" },
-      }),
-      snapshot = pricing?.payload as
-        { totalCents?: number; taxReference?: string } | undefined;
-    if (snapshot?.totalCents !== amountCents || !snapshot.taxReference)
-      throw new CommerceConflictError(
-        "This legacy order has no matching server pricing and tax receipt. Reconcile it before taking payment.",
-      );
+      });
+    const totalCents = await reviewedTotalCents(tx, locked);
+    const cash = await cashReceipt(tx, order.id);
+    const cashCents = cash ? receiptCents(cash.amount) : 0;
+    if ((await capturedTenderCents(tx, order.id)) !== cashCents)
+      throw new CommerceConflictError('A captured payment already exists; reconcile before another checkout');
+    if (cashCents && provider instanceof StripePaymentProvider && !splitStripeSandboxReady())
+      throw new CommerceConflictError('Split card checkout requires accepted Stripe test-mode credentials and webhook');
+    const amountCents = splitTenderBalance(totalCents, cashCents);
+    if (amountCents <= 0) throw new CommerceConflictError('Order balance has already been collected');
 
     const created = await tx.paymentAttempt.create({
       data: {
@@ -330,12 +383,12 @@ export async function reconcilePayment(
         order.status === "PAYMENT_PENDING"
           ? attempt.resumeStatus || "CONFIRMED"
           : order.status;
-      if (order.status === "PAYMENT_PENDING")
+      if (order.status === "PAYMENT_PENDING" || order.status === 'CANCELLED')
         await tx.order.update({
           where: { id: order.id },
           data: {
             status: restoredStatus,
-            paymentStatus: "UNPAID",
+            paymentStatus: (await cashReceipt(tx, order.id)) ? 'PARTIAL' : 'UNPAID',
             version: { increment: 1 },
           },
         });
@@ -391,18 +444,19 @@ export async function requestRefund(
     });
     if (existing) {
       if (
+        existing.provider !== 'stripe' ||
         existing.orderId !== input.orderId ||
         existing.amountCents !== input.amountCents ||
         existing.reason !== input.reason ||
         existing.requestedById !== input.actor.userId
       )
-        throw new CommerceConflictError("Refund idempotency payload changed");
+        throw new CommerceConflictError("Refund request key belongs to a different tender or payload");
       return existing;
     }
     const order = await tx.order.findUnique({ where: { id: input.orderId } });
     if (
       !order ||
-      !["COMPLETED", "CANCELLED", "REFUND_PENDING"].includes(order.status)
+      !["COMPLETED", "CANCELLED", "REFUND_PENDING", "EXCEPTION"].includes(order.status)
     )
       throw new CommerceConflictError(
         "Only paid completed or cancelled orders can be refunded",
@@ -428,7 +482,7 @@ export async function requestRefund(
     )
       throw new CommerceConflictError("No captured provider receipt exists");
     const reserved = await tx.refund.aggregate({
-      where: { orderId: order.id, status: { in: ["PENDING", "SUCCEEDED"] } },
+      where: { orderId: order.id, provider: payment.provider, status: { in: ["PENDING", "SUCCEEDED"] } },
       _sum: { amountCents: true },
     });
     if (
@@ -520,6 +574,47 @@ export async function requestRefund(
     throw error;
   }
 }
+async function settleRefundedOrder(tx: Prisma.TransactionClient, orderId: string, failed = false) {
+  const order = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
+  const capturedCents = await capturedTenderCents(tx, orderId);
+  const totals = await tx.refund.aggregate({ where: { orderId, status: 'SUCCEEDED' }, _sum: { amountCents: true } });
+  const refundedCents = totals._sum.amountCents || 0;
+  const paymentStatus = refundedPaymentStatus(capturedCents, refundedCents);
+  const nextStatus: OrderStatus = paymentStatus === 'REFUNDED' ? 'REFUNDED' : order.cancelledAt ? 'CANCELLED' : 'COMPLETED';
+  await tx.order.update({ where: { id: orderId }, data: { status: nextStatus, paymentStatus, version: { increment: 1 }, lastError: failed ? 'Provider rejected the refund' : null } });
+  return { nextStatus, paymentStatus, full: paymentStatus === 'REFUNDED', capturedCents, refundedCents };
+}
+
+export async function refundCashTender(input: { orderId: string; idempotencyKey: string; amountCents: number; reason: string; cashReturnedConfirmed: boolean; actor: Actor }) {
+  if (!(REFUND_ROLES as readonly string[]).includes(input.actor.role)) throw new AuthorizationError('Cash refund requires manager authority');
+  validKey(input.idempotencyKey);
+  if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0 || input.reason.trim().length < 3 || input.reason.length > 500 || !input.cashReturnedConfirmed)
+    throw new CommerceValidationError('Confirm the cash returned and provide a positive amount and reason');
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${input.orderId} FOR UPDATE`;
+    const prior = await tx.refund.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+    if (prior) {
+      if (prior.provider !== 'cash' || prior.orderId !== input.orderId || prior.amountCents !== input.amountCents || prior.reason !== input.reason || prior.requestedById !== input.actor.userId)
+        throw new CommerceConflictError('Cash refund request key was used for different tender');
+      return prior;
+    }
+    const order = await tx.order.findUnique({ where: { id: input.orderId } });
+    if (!order || !['COMPLETED', 'CANCELLED', 'EXCEPTION'].includes(order.status))
+      throw new CommerceConflictError('Cash refunds require a completed or cancelled order');
+    if (await tx.paymentAttempt.count({ where: { orderId: input.orderId, status: { in: ['PENDING', 'REQUIRES_ACTION'] } } }) ||
+        await tx.refund.count({ where: { orderId: input.orderId, status: 'PENDING' } }))
+      throw new CommerceConflictError('Reconcile pending card activity before returning cash');
+    const cash = await cashReceipt(tx, input.orderId);
+    if (!cash) throw new CommerceConflictError('No verified split cash receipt exists');
+    const reserved = await tx.refund.aggregate({ where: { orderId: input.orderId, provider: 'cash', status: { in: ['PENDING', 'SUCCEEDED'] } }, _sum: { amountCents: true } });
+    if ((reserved._sum.amountCents || 0) + input.amountCents > receiptCents(cash.amount))
+      throw new CommerceValidationError('Cash refund exceeds the collected cash portion');
+    const refund = await tx.refund.create({ data: { orderId: input.orderId, provider: 'cash', providerRef: `cash-refund:${input.idempotencyKey}`, idempotencyKey: input.idempotencyKey, amountCents: input.amountCents, currency: order.currency, reason: input.reason, status: 'SUCCEEDED', requestedById: input.actor.userId, completedAt: new Date() } });
+    const settled = await settleRefundedOrder(tx, input.orderId);
+    await appendPaymentEvent(tx, { orderId: input.orderId, type: 'CASH_REFUND_SUCCEEDED', actor: input.actor, idempotencyKey: `cash-refund:${input.idempotencyKey}`, payload: { refundId: refund.id, amountCents: refund.amountCents, reason: refund.reason, cashReturnedConfirmed: true, totalRefundedCents: settled.refundedCents }, fromStatus: order.status, toStatus: settled.nextStatus });
+    return refund;
+  });
+}
 export async function applyRefundReceipt(receipt: RefundReceipt) {
   const found = await prisma.refund.findUnique({
     where: { idempotencyKey: receipt.refundKey },
@@ -528,6 +623,7 @@ export async function applyRefundReceipt(receipt: RefundReceipt) {
     throw new UnrecognizedRefundError(
       "Refund was not created by this application; reconcile it manually",
     );
+  if (found.provider !== 'stripe') throw new UnrecognizedRefundError('This is not a provider card refund');
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${found.orderId} FOR UPDATE`;
     const row = await tx.refund.findUniqueOrThrow({ where: { id: found.id } }),
@@ -564,36 +660,12 @@ export async function applyRefundReceipt(receipt: RefundReceipt) {
         completedAt: status === "SUCCEEDED" ? new Date() : undefined,
       },
     });
-    const order = await tx.order.findUniqueOrThrow({
-      where: { id: row.orderId },
-    });
-    const total = await tx.refund.aggregate({
-        where: { orderId: row.orderId, status: "SUCCEEDED" },
-        _sum: { amountCents: true },
-      }),
-      full = (total._sum.amountCents || 0) === payment.amountCents;
-    if ((total._sum.amountCents || 0) > payment.amountCents)
-      throw new CommerceConflictError("Refunds exceed captured payments");
-    const nextStatus = full
-      ? "REFUNDED"
-      : order.cancelledAt
-        ? "CANCELLED"
-        : "COMPLETED";
-    if (status !== "PENDING")
-      await tx.order.update({
-        where: { id: row.orderId },
-        data: {
-          status: nextStatus,
-          paymentStatus: full
-            ? "REFUNDED"
-            : total._sum.amountCents
-              ? "PARTIALLY_REFUNDED"
-              : "PAID",
-          version: { increment: 1 },
-          lastError:
-            status === "FAILED" ? "Provider rejected the refund" : null,
-        },
-      });
+    const order = await tx.order.findUniqueOrThrow({ where: { id: row.orderId } });
+    const cardRefunds = await tx.refund.aggregate({ where: { orderId: row.orderId, provider: row.provider, status: 'SUCCEEDED' }, _sum: { amountCents: true } });
+    if ((cardRefunds._sum.amountCents || 0) > payment.amountCents) throw new CommerceConflictError('Card refunds exceed captured card payment');
+    const settled = status === 'PENDING' ? null : await settleRefundedOrder(tx, row.orderId, status === 'FAILED');
+    const full = settled?.full || false;
+    const nextStatus = settled?.nextStatus || order.status;
     const key = `${row.idempotencyKey}:${status}`;
     if (
       !(await tx.orderEvent.count({
@@ -704,6 +776,11 @@ export async function applyPaymentWebhook(input: {
           throw new CommerceConflictError(
             "Captured amount does not match the order payment amount",
           );
+        const cash = await cashReceipt(tx, order.id);
+        const cashCents = cash ? receiptCents(cash.amount) : 0;
+        const totalCents = await reviewedTotalCents(tx, order);
+        if (await capturedTenderCents(tx, order.id) !== cashCents || splitTenderBalance(totalCents, cashCents, received) !== 0)
+          throw new CommerceConflictError('Cash and card receipts do not match the reviewed order total');
         await tx.paymentAttempt.update({
           where: { id: attempt.id },
           data: {
@@ -725,20 +802,21 @@ export async function applyPaymentWebhook(input: {
           update: {},
         });
         const resumedStatus =
-          order.status === "CANCELLED"
+          order.cancelledAt || ['CANCELLED', 'REFUNDED', 'REFUND_PENDING'].includes(order.status)
             ? "EXCEPTION"
             : attempt.resumeStatus === "CONFIRMED"
               ? "PREPARING"
               : (attempt.resumeStatus ?? "CONFIRMED");
+        const refunded = await tx.refund.aggregate({ where: { orderId: order.id, status: 'SUCCEEDED' }, _sum: { amountCents: true } });
         await tx.order.update({
           where: { id: order.id },
           data: {
-            paymentStatus: "PAID",
-            paymentMethod: input.paymentMethod ?? "card",
+            paymentStatus: refunded._sum.amountCents ? 'PARTIALLY_REFUNDED' : 'PAID',
+            paymentMethod: cash ? 'cash+card' : (input.paymentMethod ?? 'card'),
             status: resumedStatus,
             version: { increment: 1 },
             lastError:
-              order.status === "CANCELLED"
+              resumedStatus === 'EXCEPTION'
                 ? "Payment captured after cancellation; refund reconciliation required"
                 : null,
           },
@@ -762,7 +840,7 @@ export async function applyPaymentWebhook(input: {
           ) ||
           Boolean(
             await tx.payment.findFirst({
-              where: { orderId: order.id, status: "completed" },
+              where: { orderId: order.id, status: "completed", NOT: { method: { equals: 'cash', mode: 'insensitive' } } },
               select: { id: true },
             }),
           );

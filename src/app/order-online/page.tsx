@@ -63,6 +63,15 @@ export default function OnlineOrdering() {
   const { data: session, status } = useSession(),
     customer = session?.user.role === "CUSTOMER",
     mutate = useMutationFetch();
+  const [guestVerified, setGuestVerified] = useState(false);
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestFirstName, setGuestFirstName] = useState('');
+  const [guestLastName, setGuestLastName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestCode, setGuestCode] = useState('');
+  const [challengeId, setChallengeId] = useState('');
+  const [guestBusy, setGuestBusy] = useState(false);
+  const canOrder = customer || guestVerified;
   const [menu, setMenu] = useState<Menu | null>(null),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -80,8 +89,8 @@ export default function OnlineOrdering() {
         result = await response.json();
       if (!response.ok) throw Error(result.error || "Menu unavailable");
       setMenu(result);
-      if (customer) {
-        const r = await fetch("/api/online-ordering/orders"),
+      if (canOrder) {
+        const r = await fetch(customer ? "/api/online-ordering/orders" : '/api/online-ordering/guest/orders'),
           j = await r.json();
         if (!r.ok) throw Error(j.error);
         setOrders(j.orders);
@@ -90,6 +99,10 @@ export default function OnlineOrdering() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load");
     }
+  }, [canOrder, customer]);
+  useEffect(() => {
+    if (customer) return;
+    fetch('/api/online-ordering/guest/session').then(response => { setGuestVerified(response.ok); }).catch(() => setGuestVerified(false));
   }, [customer]);
   useEffect(() => {
     void load();
@@ -97,6 +110,13 @@ export default function OnlineOrdering() {
   useEffect(() => {
     setQuote(null);
   }, [cart, pickup, notes, tip]);
+  useEffect(() => {
+    const payment = new URLSearchParams(window.location.search).get('payment');
+    if (payment === 'returned') setNotice('Checkout returned. Payment is confirmed only after a signed Stripe receipt or reconciliation. Open the order below to refresh receipts.');
+    if (payment === 'cancelled') setNotice('Checkout was cancelled. Open the order below to review its current payment status.');
+    const pendingOrder = window.sessionStorage.getItem('restaurant-guest-payment-order');
+    if (pendingOrder) setSelected(pendingOrder);
+  }, []);
   async function act(action: "quote" | "order" | "cancel", order?: Order) {
     if (busy) return;
     setBusy(true);
@@ -129,7 +149,7 @@ export default function OnlineOrdering() {
             : {}),
         };
       }
-      const r = await mutate("/api/online-ordering/orders", {
+      const r = await mutate(customer ? "/api/online-ordering/orders" : '/api/online-ordering/guest/orders', {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -153,6 +173,30 @@ export default function OnlineOrdering() {
     } finally {
       setBusy(false);
     }
+  }
+  async function requestGuestCode() {
+    setGuestBusy(true); setError(''); setNotice('');
+    try {
+      const response = await fetch('/api/online-ordering/guest/challenge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: guestEmail, firstName: guestFirstName, lastName: guestLastName, phone: guestPhone }) });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || 'Could not request code');
+      setChallengeId(data.challengeId); setNotice('Check your email for the one-time code. It expires in ten minutes.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not request code'); }
+    finally { setGuestBusy(false); }
+  }
+  async function verifyGuestCode() {
+    setGuestBusy(true); setError('');
+    try {
+      const response = await fetch('/api/online-ordering/guest/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ challengeId, code: guestCode }) });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || 'Could not verify code');
+      setGuestVerified(true); setNotice('Email verified. You can review and request pickup.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not verify code'); }
+    finally { setGuestBusy(false); }
+  }
+  async function endGuestSession() {
+    await fetch('/api/online-ordering/guest/session', { method: 'DELETE' });
+    setGuestVerified(false); setOrders([]); setQuote(null); setNotice('Guest session ended.');
   }
   return (
     <main className="mx-auto max-w-5xl p-6 space-y-6">
@@ -190,6 +234,15 @@ export default function OnlineOrdering() {
           {notice}
         </p>
       )}
+      {!customer && <section className="border rounded p-4 space-y-3">
+        <h2 className="text-xl font-semibold">Guest pickup checkout</h2>
+        {guestVerified ? <><p>Your email is verified for this guest session. The restaurant must accept your request before card checkout. Payment remains unconfirmed until Stripe receipt reconciliation.</p><Button variant="outline" onClick={() => void endGuestSession()}>End guest session</Button></>
+        : <><p>Enter your details and verify a one-time email code to request pickup without a restaurant password.</p>
+          <div className="grid gap-2 sm:grid-cols-2"><label>First name<input className="block border rounded p-2 w-full" maxLength={80} value={guestFirstName} onChange={event => setGuestFirstName(event.target.value)}/></label><label>Last name<input className="block border rounded p-2 w-full" maxLength={80} value={guestLastName} onChange={event => setGuestLastName(event.target.value)}/></label><label>Email<input className="block border rounded p-2 w-full" type="email" maxLength={254} value={guestEmail} onChange={event => setGuestEmail(event.target.value)}/></label><label>Phone (optional)<input className="block border rounded p-2 w-full" maxLength={40} value={guestPhone} onChange={event => setGuestPhone(event.target.value)}/></label></div>
+          <Button disabled={guestBusy || !guestFirstName.trim() || !guestLastName.trim() || !guestEmail.includes('@')} onClick={() => void requestGuestCode()}>Email verification code</Button>
+          {challengeId && <div className="flex gap-2 items-end"><label>Six-digit code<input className="block border rounded p-2" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={guestCode} onChange={event => setGuestCode(event.target.value)}/></label><Button disabled={guestBusy || !/^\d{6}$/.test(guestCode)} onClick={() => void verifyGuestCode()}>Verify email</Button></div>}
+        </>}
+      </section>}
       <Button variant="outline" onClick={load}>
         Refresh menu and orders
       </Button>
@@ -202,11 +255,11 @@ export default function OnlineOrdering() {
             menu information; contact the restaurant about allergies and
             preparation requirements.
           </p>
-          {!customer && (
+          {!canOrder && (
             <p>
               {status === "authenticated"
                 ? "Use a customer account to order."
-                : "Sign in with your restaurant-provided customer account to request pickup."}
+                : "Verify your email above or sign in with a restaurant customer account to request pickup."}
             </p>
           )}
           <div className="grid md:grid-cols-2 gap-4">
@@ -223,7 +276,7 @@ export default function OnlineOrdering() {
                     {item.allergens.join(", ") ||
                       "No information listed; ask staff"}
                   </p>
-                  {customer && (
+                  {canOrder && (
                     <>
                       <label className="block">
                         Quantity{" "}
@@ -298,7 +351,7 @@ export default function OnlineOrdering() {
               );
             })}
           </div>
-          {customer && (
+          {canOrder && (
             <section className="border rounded p-4 space-y-3">
               <h2 className="text-xl font-semibold">Review pickup request</h2>
               <label className="block">
@@ -371,7 +424,7 @@ export default function OnlineOrdering() {
           )}
         </>
       )}
-      {customer && (
+      {canOrder && (
         <section className="space-y-3">
           <h2 className="font-semibold text-xl">Your latest orders</h2>
           {orders.length === 0 && <p>No orders yet.</p>}
@@ -403,7 +456,7 @@ export default function OnlineOrdering() {
                   Cancel request
                 </Button>
               )}
-              {selected === order.id && <OrderFinance key={order.id+order.status} orderId={order.id} />}
+              {selected === order.id && <OrderFinance key={order.id+order.status} orderId={order.id} guest={!customer} />}
             </article>
           ))}
         </section>

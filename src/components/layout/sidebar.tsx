@@ -35,6 +35,8 @@ const navigation = [
   { name: "Reservations", href: "/reservations", icon: CalendarDays },
   { name: "Orders", href: "/orders", icon: ClipboardList },
   { name: "Kitchen Display", href: "/kitchen", icon: ChefHat },
+  { name: "Prep Planning", href: "/prep-planning", icon: TrendingUp },
+  { name: "Cash Closeout", href: "/cash-closeout", icon: DollarSign },
   { name: "Deliveries", href: "/deliveries", icon: Truck },
   { name: "Menu", href: "/menu", icon: UtensilsCrossed },
   { name: "Recipes", href: "/recipes", icon: BookOpen },

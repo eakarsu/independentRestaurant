@@ -13,9 +13,15 @@ import {
   reconcilePayment,
   reconcileRefund,
   requestRefund,
+  recordCashTender,
+  refundCashTender,
 } from "@/lib/commerce/payments";
+import { splitStripeSandboxReady } from '@/lib/commerce/guest-payment';
+import { receiptCents } from '@/lib/commerce/split-tender';
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pay") }),
+  z.object({ action: z.literal('cash'), amountCents: z.number().int().positive(), cashReceivedCents: z.number().int().positive(), confirmed: z.literal(true) }).strict(),
+  z.object({ action: z.literal('cash-refund'), amountCents: z.number().int().positive(), reason: z.string().trim().min(3).max(500), cashReturnedConfirmed: z.literal(true) }).strict(),
   z.object({
     action: z.enum(["reconcile", "expire", "refund-reconcile"]),
     reference: z.string().min(1).max(200),
@@ -58,7 +64,13 @@ export const GET = withAccess(
       ? Response.json({
           order,
           canRefund: ["ADMIN", "MERCHANT", "MANAGER"].includes(actor.role),
-        })
+          canRecordCash: ['ADMIN', 'MERCHANT', 'MANAGER', 'OPERATOR', 'STAFF', 'HOST'].includes(actor.role) && ['CONFIRMED', 'PREPARING', 'READY', 'SERVED'].includes(order.status) && ['UNPAID', 'FAILED'].includes(order.paymentStatus) && !order.payments.some(payment => payment.status === 'completed') && !order.paymentAttempts.length,
+          splitCheckoutEnabled: splitStripeSandboxReady(),
+          totalCents: receiptCents(order.total),
+          capturedCashCents: order.payments.filter(payment => payment.status === 'completed' && payment.method.toLowerCase() === 'cash').reduce((sum, payment) => sum + receiptCents(payment.amount), 0),
+          capturedCardCents: order.payments.filter(payment => payment.status === 'completed' && payment.method.toLowerCase() !== 'cash').reduce((sum, payment) => sum + receiptCents(payment.amount), 0),
+          refundedCashCents: order.refunds.filter(refund => refund.provider === 'cash' && refund.status === 'SUCCEEDED').reduce((sum, refund) => sum + refund.amountCents, 0),
+        }, { headers: { 'Cache-Control': 'no-store' } })
       : Response.json({ error: "Order not found" }, { status: 404 });
   },
 );
@@ -66,6 +78,9 @@ export const POST = withAccess(
   ORDER_WRITE_ROLES,
   async (request: Request, { params }: { params: Promise<{ id: string }> }) => {
     try {
+      const origin = request.headers.get('origin');
+      if (origin && origin !== new URL(request.url).origin && origin !== process.env.NEXTAUTH_URL)
+        throw new AuthorizationError('Cross-origin finance request is not permitted', 403);
       const actor = await requireActor(ORDER_WRITE_ROLES),
         { id: orderId } = await params,
         input = schema.parse(await body(request));
@@ -77,6 +92,12 @@ export const POST = withAccess(
             idempotencyKey: request.headers.get("idempotency-key") || "",
           }),
         );
+      if (input.action === 'cash') {
+        if (!splitStripeSandboxReady()) return Response.json({ error: 'Split tender is unavailable until Stripe test-mode checkout and webhook are accepted' }, { status: 503 });
+        return Response.json(await recordCashTender({ orderId, actor, idempotencyKey: request.headers.get('idempotency-key') || '', amountCents: input.amountCents, cashReceivedCents: input.cashReceivedCents }));
+      }
+      if (input.action === 'cash-refund')
+        return Response.json(await refundCashTender({ orderId, actor, idempotencyKey: request.headers.get('idempotency-key') || '', amountCents: input.amountCents, reason: input.reason, cashReturnedConfirmed: input.cashReturnedConfirmed }));
       if (input.action === "refund")
         return Response.json(
           await requestRefund({

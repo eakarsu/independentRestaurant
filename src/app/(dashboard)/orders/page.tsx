@@ -835,7 +835,7 @@ function OrdersPageContent() {
                         {order.status === "READY" && (
                           <Button size="sm" onClick={() => handleUpdateOrderStatus(order.id, "SERVED")}>Serve</Button>
                         )}
-                        {["UNPAID", "FAILED", "PAYMENT_PENDING", "AUTHORIZING"].includes(order.paymentStatus) && ["CONFIRMED", "READY", "SERVED", "PAYMENT_PENDING"].includes(order.status) && (
+                        {["UNPAID", "FAILED", "PARTIAL", "PAYMENT_PENDING", "AUTHORIZING"].includes(order.paymentStatus) && ["CONFIRMED", "READY", "SERVED", "PAYMENT_PENDING"].includes(order.status) && (
                             <Button size="sm" onClick={() => handlePayOrder(order.id)}>
                               <CreditCard className="mr-1 h-3 w-3" /> Pay Card
                             </Button>
@@ -1026,7 +1026,7 @@ function OrdersPageContent() {
                       Serve
                     </Button>
                   )}
-                  {["CONFIRMED", "READY", "SERVED"].includes(detailOrder.status) && ["UNPAID", "FAILED"].includes(detailOrder.paymentStatus) && (
+                  {["CONFIRMED", "READY", "SERVED"].includes(detailOrder.status) && ["UNPAID", "FAILED", "PARTIAL"].includes(detailOrder.paymentStatus) && (
                       <Button size="sm" onClick={() => { handlePayOrder(detailOrder.id); setIsDetailSheetOpen(false); }}>
                         <CreditCard className="mr-1 h-3 w-3" /> Pay Card
                       </Button>
