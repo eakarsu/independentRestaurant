@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordPage, readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { OrderFinance } from "@/components/operations/order-finance";
 import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
 import { useState, useEffect, useCallback, Suspense } from "react";
@@ -122,6 +125,7 @@ function OrdersPageContent() {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [tables, setTables] = useState<TableData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isNewOrderDialogOpen, setIsNewOrderDialogOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -185,6 +189,8 @@ function OrdersPageContent() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -203,33 +209,26 @@ function OrdersPageContent() {
       ]);
 
       const [ordersResult, categoriesData, tablesData, activeCountData, completedCountData] = await Promise.all([
-        ordersRes.json(),
-        categoriesRes.json(),
-        tablesRes.json(),
-        activeCountRes.json(),
-        completedCountRes.json(),
+        readRecordPage<Order>(ordersRes),
+        readRecordArray<MenuCategory>(categoriesRes),
+        readRecordArray<TableData>(tablesRes),
+        readRecordPage<Order>(activeCountRes),
+        readRecordPage<Order>(completedCountRes),
       ]);
 
-      if (ordersResult.data) {
-        setOrders(ordersResult.data);
-        setTotalItems(ordersResult.pagination.totalItems);
-        setTotalPages(ordersResult.pagination.totalPages);
-      } else {
-        const data = Array.isArray(ordersResult) ? ordersResult : [];
-        setOrders(data);
-        setTotalItems(data.length);
-        setTotalPages(1);
-      }
+      setOrders(ordersResult.data);
+      setTotalItems(ordersResult.pagination.totalItems);
+      setTotalPages(ordersResult.pagination.totalPages);
       if (activeCountData?.pagination) setActiveCount(activeCountData.pagination.totalItems);
       if (completedCountData?.pagination) setCompletedCount(completedCountData.pagination.totalItems);
 
-      setCategories(Array.isArray(categoriesData) ? categoriesData : []);
-      setTables(Array.isArray(tablesData) ? tablesData : []);
+      setCategories(categoriesData);
+      setTables(tablesData);
       if (categoriesData.length > 0 && !selectedCategory) {
         setSelectedCategory(categoriesData[0].id);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -563,6 +562,7 @@ function OrdersPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Orders" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
@@ -1005,7 +1005,10 @@ function OrdersPageContent() {
                 </div>
 
                 <OrderFinance key={detailOrder.id} orderId={detailOrder.id}/>
+                <p className="text-xs text-muted-foreground">Order contents and financial history are retained. Use the authorized status or refund actions for corrections.</p>
                 <DialogFooter className="flex-wrap gap-2">
+                  <Button size="sm" variant="outline" disabled title="The native order contract retains immutable order contents">Edit</Button>
+                  <Button size="sm" variant="outline" disabled title="Order and financial evidence cannot be deleted">Delete</Button>
                   {detailOrder.status === "PENDING" && (
                     <Button size="sm" onClick={() => { handleUpdateOrderStatus(detailOrder.id, "CONFIRMED"); setIsDetailSheetOpen(false); }}>
                       Confirm Order
@@ -1033,9 +1036,10 @@ function OrdersPageContent() {
                   )}
                   {detailOrder.status === "PENDING" && (
                     <Button size="sm" variant="destructive" onClick={() => { handleUpdateOrderStatus(detailOrder.id, "CANCELLED"); setIsDetailSheetOpen(false); }}>
-                      <XCircle className="mr-1 h-3 w-3" /> Cancel
+                      <XCircle className="mr-1 h-3 w-3" /> Cancel order
                     </Button>
                   )}
+                <Button type="button" variant="outline" onClick={() => setIsDetailSheetOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

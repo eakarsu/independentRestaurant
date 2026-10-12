@@ -1,5 +1,9 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+import { useRecordRequest } from "@/components/use-record-request";
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,6 +29,14 @@ import { toast } from "@/components/ui/use-toast";
 import { ChefHat, Clock, Users, Plus, Search, Play, Utensils } from "lucide-react";
 import { fetchCollection } from "@/lib/fetchCollection";
 
+type SavedInstruction = string | { step?: number; text?: string; instruction?: string; image?: string; [key: string]: unknown };
+
+function instructionText(instruction: SavedInstruction): string {
+  if (typeof instruction === "string") return instruction;
+  if (typeof instruction.text === "string") return instruction.text;
+  return typeof instruction.instruction === "string" ? instruction.instruction : "";
+}
+
 interface Recipe {
   id: string;
   menuItemId: string;
@@ -32,7 +44,7 @@ interface Recipe {
   cookTime: number;
   servings: number;
   difficulty: string;
-  instructions: { step: number; text: string; image?: string }[];
+  instructions: SavedInstruction[];
   notes?: string;
   videoUrl?: string;
   allergenNotes?: string;
@@ -54,12 +66,15 @@ interface MenuItem {
 }
 
 export default function RecipesPage() {
+  const mutation = useRecordRequest();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
 
   const [newRecipe, setNewRecipe] = useState({
     menuItemId: "",
@@ -74,16 +89,18 @@ export default function RecipesPage() {
   });
 
   const fetchData = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const [recipesRes, menuData] = await Promise.all([
         fetch("/api/recipes"),
         fetchCollection<MenuItem>("/api/menu/items"),
       ]);
-      const recipesData = await recipesRes.json();
-      setRecipes(Array.isArray(recipesData) ? recipesData : []);
+      const recipesData = await readRecordArray<Recipe>(recipesRes);
+      setRecipes(recipesData);
       setMenuItems(menuData);
     } catch (error) {
-      console.error("Error fetching data:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -94,18 +111,32 @@ export default function RecipesPage() {
   }, []);
 
   const handleCreateRecipe = async () => {
+    const controller = mutation.start(); if (!controller) return;
     try {
-      const response = await fetch("/api/recipes", {
-        method: "POST",
+      // Preserve the original JSON shape and metadata for saved recipes. Older
+      // native rows use `instruction` or a plain string instead of `text`.
+      const instructions = newRecipe.instructions.map((step, index) => {
+        const original = editingRecipe?.instructions[index];
+        if (original === undefined) return step;
+        if (step.text === instructionText(original)) return original;
+        if (typeof original === "string") return step.text;
+        if (typeof original.instruction === "string" && typeof original.text !== "string") return { ...original, instruction: step.text };
+        return { ...original, text: step.text };
+      });
+      const response = await fetch(editingRecipe ? `/api/recipes/${editingRecipe.id}` : "/api/recipes", {
+        method: editingRecipe ? "PUT" : "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRecipe),
+        body: JSON.stringify({ ...newRecipe, instructions }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Failed to create recipe");
       }
-      toast({ title: "Success", description: "Recipe created" });
+      if (controller.signal.aborted) return;
+      toast({ title: "Success", description: editingRecipe ? "Recipe updated" : "Recipe created" });
       setShowCreateDialog(false);
+      setEditingRecipe(null);
       setNewRecipe({
         menuItemId: "",
         prepTime: 15,
@@ -119,8 +150,36 @@ export default function RecipesPage() {
       });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create recipe", variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create recipe", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
+  };
+
+  const editRecipe = (recipe: Recipe) => {
+    setEditingRecipe(recipe);
+    setNewRecipe({ menuItemId: recipe.menuItemId, prepTime: recipe.prepTime, cookTime: recipe.cookTime, servings: recipe.servings, difficulty: recipe.difficulty, instructions: recipe.instructions.map((step, index) => ({ ...(typeof step === "string" ? {} : step), step: typeof step !== "string" && typeof step.step === "number" ? step.step : index + 1, text: instructionText(step) })), notes: recipe.notes || "", videoUrl: recipe.videoUrl || "", allergenNotes: recipe.allergenNotes || "" });
+    setSelectedRecipe(null);
+    setShowCreateDialog(true);
+  };
+
+  const startRecipe = () => {
+    setEditingRecipe(null);
+    setNewRecipe({ menuItemId: "", prepTime: 15, cookTime: 20, servings: 1, difficulty: "MEDIUM", instructions: [{ step: 1, text: "" }], notes: "", videoUrl: "", allergenNotes: "" });
+    setShowCreateDialog(true);
+  };
+
+  const deleteRecipe = async (recipe: Recipe) => {
+    if (!confirm("Delete this saved recipe?")) return;
+    const controller = mutation.start(); if (!controller) return;
+    try {
+      const response = await fetch(`/api/recipes/${recipe.id}`, { method: "DELETE", signal: controller.signal });
+      if (!response.ok) throw new Error("The recipe could not be deleted. It remains saved.");
+      if (controller.signal.aborted) return;
+      setSelectedRecipe(null);
+      await fetchData();
+    } catch (error) { if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Recipe deletion failed", variant: "destructive" }); }
+    finally { mutation.finish(controller); if (controller.signal.aborted) void fetchData(); }
   };
 
   const addInstructionStep = () => {
@@ -158,7 +217,7 @@ export default function RecipesPage() {
 
   // Get menu items that don't have recipes yet
   const availableMenuItems = menuItems.filter(
-    (item) => !recipes.some((recipe) => recipe.menuItemId === item.id)
+    (item) => item.id === editingRecipe?.menuItemId || !recipes.some((recipe) => recipe.menuItemId === item.id)
   );
 
   if (loading) {
@@ -171,12 +230,14 @@ export default function RecipesPage() {
 
   return (
     <div className="space-y-6">
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
+      {mutation.notice && <p role="status">{mutation.notice}</p>}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Recipes & Prep Instructions</h1>
           <p className="text-muted-foreground">Detailed cooking instructions for menu items</p>
         </div>
-        <Button onClick={() => setShowCreateDialog(true)}>
+        <Button onClick={startRecipe}>
           <Plus className="h-4 w-4 mr-2" />
           Add Recipe
         </Button>
@@ -247,7 +308,7 @@ export default function RecipesPage() {
               <ChefHat className="h-16 w-16 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold">No recipes found</h3>
               <p className="text-muted-foreground">Add recipes for your menu items</p>
-              <Button className="mt-4" onClick={() => setShowCreateDialog(true)}>
+              <Button className="mt-4" onClick={startRecipe}>
                 Add First Recipe
               </Button>
             </CardContent>
@@ -286,7 +347,7 @@ export default function RecipesPage() {
                   </div>
                 </div>
                 <p className="text-sm line-clamp-2">
-                  {recipe.instructions[0]?.text || "No instructions"}
+                  {recipe.instructions[0] ? instructionText(recipe.instructions[0]) || "No instructions" : "No instructions"}
                 </p>
                 {recipe.videoUrl && (
                   <div className="flex items-center gap-1 mt-2 text-sm text-blue-500">
@@ -301,13 +362,14 @@ export default function RecipesPage() {
       </div>
 
       {/* Create Recipe Dialog */}
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+      <Dialog open={showCreateDialog} onOpenChange={open => { if (!open) mutation.cancel(); setShowCreateDialog(open); }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add Recipe</DialogTitle>
+            <DialogTitle>{editingRecipe ? "Edit Recipe" : "Add Recipe"}</DialogTitle>
             <DialogDescription>Add cooking instructions for a menu item</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <fieldset disabled={mutation.busy} className="space-y-4">
             <div className="space-y-2">
               <Label>Menu Item</Label>
               <Select
@@ -422,17 +484,18 @@ export default function RecipesPage() {
               />
             </div>
 
+            </fieldset>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              <Button variant="outline" onClick={() => { mutation.cancel(); setShowCreateDialog(false); }}>
                 Cancel
               </Button>
               <Button
                 onClick={handleCreateRecipe}
                 disabled={
-                  !newRecipe.menuItemId || !newRecipe.instructions.some((i) => i.text.trim())
+                  mutation.busy || !newRecipe.menuItemId || !newRecipe.instructions.some((i) => i.text.trim())
                 }
               >
-                Create Recipe
+                {editingRecipe ? "Save recipe changes" : "Create Recipe"}
               </Button>
             </div>
           </div>
@@ -440,7 +503,7 @@ export default function RecipesPage() {
       </Dialog>
 
       {/* Recipe Detail Dialog */}
-      <Dialog open={!!selectedRecipe} onOpenChange={() => setSelectedRecipe(null)}>
+      <Dialog open={!!selectedRecipe} onOpenChange={open => { if (!open) { mutation.cancel(); setSelectedRecipe(null); } }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           {selectedRecipe && (
             <>
@@ -508,9 +571,9 @@ export default function RecipesPage() {
                     {selectedRecipe.instructions.map((instruction, idx) => (
                       <li key={idx} className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium">
-                          {instruction.step}
+                          {typeof instruction !== "string" && instruction.step || idx + 1}
                         </span>
-                        <p className="text-sm">{instruction.text}</p>
+                        <p className="text-sm">{instructionText(instruction)}</p>
                       </li>
                     ))}
                   </ol>
@@ -558,7 +621,9 @@ export default function RecipesPage() {
               </div>
             </>
           )}
-        </DialogContent>
+          {selectedRecipe && <div className="flex justify-end gap-2"><Button type="button" disabled={mutation.busy} onClick={() => editRecipe(selectedRecipe)}>Edit</Button><Button type="button" disabled={mutation.busy} variant="destructive" onClick={() => void deleteRecipe(selectedRecipe)}>Delete</Button></div>}
+          <Button type="button" variant="outline" onClick={() => { mutation.cancel(); setSelectedRecipe(null); }}>Cancel</Button>
+                </DialogContent>
       </Dialog>
     </div>
   );

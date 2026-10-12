@@ -1,3 +1,4 @@
+import { recordMutation, recordMutationFailure } from "@/lib/record-mutation";
 import { withAccess, MANAGEMENT } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -30,6 +31,7 @@ async function handleGET(request: NextRequest) {
 
     return NextResponse.json(schedules);
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error fetching schedules:", error);
     return NextResponse.json(
       { error: "Failed to fetch schedules" },
@@ -46,7 +48,7 @@ async function handlePOST(request: NextRequest) {
     // Append T12:00:00 to date to avoid timezone shifts across day boundaries
     const dateAtNoon = new Date(`${date}T12:00:00`);
 
-    const schedule = await prisma.schedule.create({
+    const schedule = await recordMutation(request, tx => tx.schedule.create({
       data: {
         staffId,
         date: dateAtNoon,
@@ -60,10 +62,11 @@ async function handlePOST(request: NextRequest) {
           include: { user: true },
         },
       },
-    });
+    }));
 
     return NextResponse.json(schedule, { status: 201 });
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error creating schedule:", error);
     return NextResponse.json(
       { error: "Failed to create schedule" },

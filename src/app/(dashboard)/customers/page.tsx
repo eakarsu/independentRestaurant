@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordPage } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
@@ -55,6 +58,7 @@ function CustomersPageContent() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isDetailSheetOpen, setIsDetailSheetOpen] = useState(false);
@@ -92,6 +96,8 @@ function CustomersPageContent() {
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -102,21 +108,13 @@ function CustomersPageContent() {
       if (search) params.set("search", search);
 
       const res = await fetch(`/api/customers?${params}`);
-      const result = await res.json();
+      const result = await readRecordPage<Customer>(res);
 
-      if (result.data) {
-        setCustomers(result.data);
-        setTotalItems(result.pagination.totalItems);
-        setTotalPages(result.pagination.totalPages);
-      } else {
-        // Fallback for non-paginated response
-        const data = Array.isArray(result) ? result : [];
-        setCustomers(data);
-        setTotalItems(data.length);
-        setTotalPages(1);
-      }
-    } catch {
-      toast({ title: "Error", description: "Failed to load customers", variant: "destructive" });
+      setCustomers(result.data);
+      setTotalItems(result.pagination.totalItems);
+      setTotalPages(result.pagination.totalPages);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -365,6 +363,7 @@ function CustomersPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Customer Management" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchCustomers()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div>
@@ -685,6 +684,7 @@ function CustomersPageContent() {
                   >
                     <Edit className="mr-2 h-4 w-4" /> Edit Customer
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsDetailSheetOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

@@ -23,10 +23,10 @@ export async function queueNotification(actor:Actor,request:Request,input:z.infe
  * worker delivers it with provider receipts; returns null when the staff
  * address or email provider is not configured.
  */
-export async function queueStaffAlert(input:{subject:string;message:string;metadata?:Prisma.InputJsonValue}){
+export async function queueStaffAlert(input:{subject:string;message:string;metadata?:Prisma.InputJsonValue},db:Prisma.TransactionClient=prisma){
  const recipient=process.env.RESTAURANT_STAFF_NOTIFICATION_TARGET;
  if(!recipient||!process.env.RESEND_API_KEY||!process.env.RESEND_FROM_EMAIL)return null;
- return prisma.notification.create({data:{type:'HANDOFF',channel:'EMAIL',recipient,subject:input.subject,message:input.message,metadata:input.metadata,provider:'resend',consentRecorded:true,deliveryKey:`staff-alert:${randomUUID()}`}});
+ return db.notification.create({data:{type:'HANDOFF',channel:'EMAIL',recipient,subject:input.subject,message:input.message,metadata:input.metadata,provider:'resend',consentRecorded:true,deliveryKey:`staff-alert:${randomUUID()}`}});
 }
 export type DeliveryEvidence={provider:string;reference:string;status:'SENT'|'DELIVERED'|'FAILED';eventId:string};
 export async function recordDeliveryEvidence(evidence:DeliveryEvidence){

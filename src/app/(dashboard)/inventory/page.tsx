@@ -1,5 +1,9 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+import { useRecordRequest } from "@/components/use-record-request";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +27,9 @@ interface Vendor {
   contactName: string | null;
   email: string | null;
   phone: string | null;
+  address: string | null;
+  paymentTerms: string | null;
+  notes: string | null;
   isActive: boolean;
 }
 
@@ -39,9 +46,11 @@ interface Ingredient {
 }
 
 export default function InventoryPage() {
+  const mutation = useRecordRequest();
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isIngredientDialogOpen, setIsIngredientDialogOpen] = useState(false);
   const [isVendorDialogOpen, setIsVendorDialogOpen] = useState(false);
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
@@ -75,32 +84,35 @@ export default function InventoryPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const [ingredientsRes, vendorsRes] = await Promise.all([
         fetch("/api/inventory/ingredients"),
         fetch("/api/inventory/vendors"),
       ]);
       const [ingredientsData, vendorsData] = await Promise.all([
-        ingredientsRes.json(),
-        vendorsRes.json(),
+        readRecordArray<Ingredient>(ingredientsRes),
+        readRecordArray<Vendor>(vendorsRes),
       ]);
-      setIngredients(Array.isArray(ingredientsData) ? ingredientsData : []);
-      setVendors(Array.isArray(vendorsData) ? vendorsData : []);
+      setIngredients(ingredientsData);
+      setVendors(vendorsData);
     } catch (error) {
-      console.error("Error:", error);
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleSaveIngredient = async () => {
+    const controller = mutation.start(); if (!controller) return;
     try {
       const url = editingIngredient
         ? `/api/inventory/ingredients/${editingIngredient.id}`
         : "/api/inventory/ingredients";
       const response = await fetch(url, {
         method: editingIngredient ? "PUT" : "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...ingredientForm, vendorId: ingredientForm.vendorId || null }),
       });
@@ -108,35 +120,45 @@ export default function InventoryPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Failed to save ingredient");
       }
+      if (controller.signal.aborted) return;
       toast({ title: "Success", description: `Ingredient ${editingIngredient ? "updated" : "created"}` });
       setIsIngredientDialogOpen(false);
       setEditingIngredient(null);
       setIngredientForm({ name: "", unit: "lbs", currentStock: 0, parLevel: 0, reorderPoint: 0, cost: 0, vendorId: "" });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save ingredient", variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save ingredient", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
   };
 
   const handleDeleteIngredient = async (id: string) => {
+    const controller = mutation.start(); if (!controller) return;
     try {
-      const response = await fetch(`/api/inventory/ingredients/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/inventory/ingredients/${id}`, { method: "DELETE", signal: controller.signal });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Failed to delete ingredient");
       }
+      if (controller.signal.aborted) return;
+      setIsIngredientDetailOpen(false);
       toast({ title: "Success", description: "Ingredient deleted" });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
   };
 
   const handleSaveVendor = async () => {
+    const controller = mutation.start(); if (!controller) return;
     try {
       const url = editingVendor ? `/api/inventory/vendors/${editingVendor.id}` : "/api/inventory/vendors";
       const response = await fetch(url, {
         method: editingVendor ? "PUT" : "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(vendorForm),
       });
@@ -144,14 +166,31 @@ export default function InventoryPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Failed to save vendor");
       }
+      if (controller.signal.aborted) return;
       toast({ title: "Success", description: `Vendor ${editingVendor ? "updated" : "created"}` });
       setIsVendorDialogOpen(false);
       setEditingVendor(null);
       setVendorForm({ name: "", contactName: "", email: "", phone: "", address: "", paymentTerms: "", notes: "" });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save vendor", variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save vendor", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
+  };
+
+  const deleteVendor = async (vendor: Vendor) => {
+    if (!window.confirm(`Delete vendor ${vendor.name}? Existing ingredient references may prevent deletion.`)) return;
+    const controller = mutation.start(); if (!controller) return;
+    try {
+      const response = await fetch(`/api/inventory/vendors/${vendor.id}`, { method: "DELETE", signal: controller.signal });
+      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || "Failed to delete vendor"); }
+      if (controller.signal.aborted) return;
+      setIsVendorDetailOpen(false);
+      toast({ title: "Vendor deleted" });
+      await fetchData();
+    } catch (error) { if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete vendor", variant: "destructive" }); }
+    finally { mutation.finish(controller); if (controller.signal.aborted) void fetchData(); }
   };
 
   const openEditIngredient = (ing: Ingredient) => {
@@ -168,6 +207,9 @@ export default function InventoryPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Inventory" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
+      {mutation.notice && <p role="status">{mutation.notice}</p>}
+      {mutation.busy && <Button type="button" variant="outline" onClick={mutation.cancel}>Cancel record request</Button>}
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         {lowStockItems.length > 0 && (
           <Card className="border-yellow-500">
@@ -198,7 +240,7 @@ export default function InventoryPage() {
 
           <TabsContent value="ingredients">
             <div className="flex justify-end mb-4">
-              <Dialog open={isIngredientDialogOpen} onOpenChange={setIsIngredientDialogOpen}>
+              <Dialog open={isIngredientDialogOpen} onOpenChange={open => { if (!open) mutation.cancel(); setIsIngredientDialogOpen(open); }}>
                 <DialogTrigger asChild>
                   <Button onClick={() => { setEditingIngredient(null); setIngredientForm({ name: "", unit: "lbs", currentStock: 0, parLevel: 0, reorderPoint: 0, cost: 0, vendorId: "" }); }}>
                     <Plus className="mr-2 h-4 w-4" /> Add Ingredient
@@ -208,7 +250,7 @@ export default function InventoryPage() {
                   <DialogHeader>
                     <DialogTitle>{editingIngredient ? "Edit" : "Add"} Ingredient</DialogTitle>
                   </DialogHeader>
-                  <div className="grid gap-4 py-4">
+                  <fieldset disabled={mutation.busy} className="grid gap-4 py-4">
                     <div className="grid gap-2">
                       <Label>Name</Label>
                       <Input value={ingredientForm.name} onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })} />
@@ -257,10 +299,10 @@ export default function InventoryPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
+                  </fieldset>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsIngredientDialogOpen(false)}>Cancel</Button>
-                    <Button onClick={handleSaveIngredient}>Save</Button>
+                    <Button variant="outline" onClick={() => { mutation.cancel(); setIsIngredientDialogOpen(false); }}>Cancel</Button>
+                    <Button disabled={mutation.busy} onClick={handleSaveIngredient}>Save</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -320,7 +362,7 @@ export default function InventoryPage() {
 
           <TabsContent value="vendors">
             <div className="flex justify-end mb-4">
-              <Dialog open={isVendorDialogOpen} onOpenChange={setIsVendorDialogOpen}>
+              <Dialog open={isVendorDialogOpen} onOpenChange={open => { if (!open) mutation.cancel(); setIsVendorDialogOpen(open); }}>
                 <DialogTrigger asChild>
                   <Button onClick={() => { setEditingVendor(null); setVendorForm({ name: "", contactName: "", email: "", phone: "", address: "", paymentTerms: "", notes: "" }); }}>
                     <Plus className="mr-2 h-4 w-4" /> Add Vendor
@@ -328,7 +370,7 @@ export default function InventoryPage() {
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader><DialogTitle>{editingVendor ? "Edit" : "Add"} Vendor</DialogTitle></DialogHeader>
-                  <div className="grid gap-4 py-4">
+                  <fieldset disabled={mutation.busy} className="grid gap-4 py-4">
                     <div className="grid gap-2"><Label>Company Name</Label><Input value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} /></div>
                     <div className="grid gap-2"><Label>Contact Name</Label><Input value={vendorForm.contactName} onChange={(e) => setVendorForm({ ...vendorForm, contactName: e.target.value })} /></div>
                     <div className="grid grid-cols-2 gap-4">
@@ -336,10 +378,12 @@ export default function InventoryPage() {
                       <div className="grid gap-2"><Label>Phone</Label><Input value={vendorForm.phone} onChange={(e) => setVendorForm({ ...vendorForm, phone: e.target.value })} /></div>
                     </div>
                     <div className="grid gap-2"><Label>Payment Terms</Label><Input value={vendorForm.paymentTerms} onChange={(e) => setVendorForm({ ...vendorForm, paymentTerms: e.target.value })} placeholder="Net 30" /></div>
-                  </div>
+                    <div className="grid gap-2"><Label>Address</Label><Input value={vendorForm.address} onChange={(e) => setVendorForm({ ...vendorForm, address: e.target.value })} /></div>
+                    <div className="grid gap-2"><Label>Notes</Label><Textarea value={vendorForm.notes} onChange={(e) => setVendorForm({ ...vendorForm, notes: e.target.value })} /></div>
+                  </fieldset>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsVendorDialogOpen(false)}>Cancel</Button>
-                    <Button onClick={handleSaveVendor}>Save</Button>
+                    <Button variant="outline" onClick={() => { mutation.cancel(); setIsVendorDialogOpen(false); }}>Cancel</Button>
+                    <Button disabled={mutation.busy} onClick={handleSaveVendor}>Save</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -360,7 +404,7 @@ export default function InventoryPage() {
                     <p className="text-sm">{vendor.email}</p>
                     <p className="text-sm">{vendor.phone}</p>
                     <div className="flex gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
-                      <Button size="sm" variant="outline" onClick={() => { setEditingVendor(vendor); setVendorForm({ name: vendor.name, contactName: vendor.contactName || "", email: vendor.email || "", phone: vendor.phone || "", address: "", paymentTerms: "", notes: "" }); setIsVendorDialogOpen(true); }}>Edit</Button>
+                      <Button size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); setEditingVendor(vendor); setVendorForm({ name: vendor.name, contactName: vendor.contactName || "", email: vendor.email || "", phone: vendor.phone || "", address: vendor.address || "", paymentTerms: vendor.paymentTerms || "", notes: vendor.notes || "" }); setIsVendorDialogOpen(true); }}>Edit</Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -370,7 +414,7 @@ export default function InventoryPage() {
         </Tabs>
 
         {/* Ingredient Detail Dialog */}
-        <Dialog open={isIngredientDetailOpen} onOpenChange={setIsIngredientDetailOpen}>
+        <Dialog open={isIngredientDetailOpen} onOpenChange={open => { if (!open) mutation.cancel(); setIsIngredientDetailOpen(open); }}>
           <DialogContent className="max-w-md">
             {detailIngredient && (
               <>
@@ -429,11 +473,14 @@ export default function InventoryPage() {
 
                 <DialogFooter>
                   <Button
+                    disabled={mutation.busy}
                     onClick={() => { openEditIngredient(detailIngredient); setIsIngredientDetailOpen(false); }}
                     className="w-full"
                   >
                     <Edit className="mr-2 h-4 w-4" /> Edit Ingredient
                   </Button>
+                  <Button type="button" disabled={mutation.busy} variant="destructive" onClick={() => { if (window.confirm(`Delete ingredient ${detailIngredient.name}?`)) void handleDeleteIngredient(detailIngredient.id); }}>Delete</Button>
+                <Button type="button" variant="outline" onClick={() => { mutation.cancel(); setIsIngredientDetailOpen(false); }}>Cancel</Button>
                 </DialogFooter>
               </>
             )}
@@ -441,7 +488,7 @@ export default function InventoryPage() {
         </Dialog>
 
         {/* Vendor Detail Dialog */}
-        <Dialog open={isVendorDetailOpen} onOpenChange={setIsVendorDetailOpen}>
+        <Dialog open={isVendorDetailOpen} onOpenChange={open => { if (!open) mutation.cancel(); setIsVendorDetailOpen(open); }}>
           <DialogContent className="max-w-md">
             {detailVendor && (
               <>
@@ -497,6 +544,7 @@ export default function InventoryPage() {
 
                 <DialogFooter>
                   <Button
+                    disabled={mutation.busy}
                     onClick={() => {
                       setEditingVendor(detailVendor);
                       setVendorForm({
@@ -504,9 +552,9 @@ export default function InventoryPage() {
                         contactName: detailVendor.contactName || "",
                         email: detailVendor.email || "",
                         phone: detailVendor.phone || "",
-                        address: "",
-                        paymentTerms: "",
-                        notes: ""
+                        address: detailVendor.address || "",
+                        paymentTerms: detailVendor.paymentTerms || "",
+                        notes: detailVendor.notes || ""
                       });
                       setIsVendorDialogOpen(true);
                       setIsVendorDetailOpen(false);
@@ -515,6 +563,8 @@ export default function InventoryPage() {
                   >
                     <Edit className="mr-2 h-4 w-4" /> Edit Vendor
                   </Button>
+                  <Button type="button" disabled={mutation.busy} variant="destructive" onClick={() => void deleteVendor(detailVendor)}>Delete</Button>
+                <Button type="button" variant="outline" onClick={() => { mutation.cancel(); setIsVendorDetailOpen(false); }}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordPage } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import Link from "next/link";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/layout/header";
@@ -50,6 +53,7 @@ function StaffPageContent() {
   const clockRequest = useRef<{signature:string;key:string}|null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -89,6 +93,8 @@ function StaffPageContent() {
 
   const fetchStaff = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -98,20 +104,13 @@ function StaffPageContent() {
       });
 
       const res = await fetch(`/api/staff?${params}`);
-      const result = await res.json();
+      const result = await readRecordPage<Staff>(res);
 
-      if (result.data) {
-        setStaff(result.data);
-        setTotalItems(result.pagination.totalItems);
-        setTotalPages(result.pagination.totalPages);
-      } else {
-        const data = Array.isArray(result) ? result : [];
-        setStaff(data);
-        setTotalItems(data.length);
-        setTotalPages(1);
-      }
-    } catch {
-      toast({ title: "Error", description: "Failed to load staff", variant: "destructive" });
+      setStaff(result.data);
+      setTotalItems(result.pagination.totalItems);
+      setTotalPages(result.pagination.totalPages);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -382,6 +381,7 @@ function StaffPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Staff Management" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchStaff()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div>
@@ -748,6 +748,7 @@ function StaffPageContent() {
                   >
                     <Edit className="mr-2 h-4 w-4" /> Edit Staff Member
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

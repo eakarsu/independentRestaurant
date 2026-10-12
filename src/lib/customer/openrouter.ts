@@ -112,7 +112,9 @@ export async function askAssistant(input: {
   knowledge?: { title: string; content: string; sourceUrl?: string | null }[];
   history?: { role: 'guest' | 'assistant'; text: string }[];
   fetcher?: typeof fetch;
+  signal?: AbortSignal;
 }): Promise<AiReply> {
+  input.signal?.throwIfAborted();
   const status = providerConfigured();
   if (!status.ok) {
     return { usedProvider: false, text: '', model: null, providerRef: null, error: status.detail };
@@ -139,7 +141,7 @@ export async function askAssistant(input: {
         // out role==="system" stripped the menu rows and left the model blind.
         messages,
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
@@ -154,7 +156,12 @@ export async function askAssistant(input: {
     }
 
     const payload: any = await response.json();
-    const text = String(payload?.choices?.[0]?.message?.content ?? '').trim();
+    input.signal?.throwIfAborted();
+    const choice = payload?.choices?.[0];
+    if (payload?.error || choice?.message?.refusal || choice?.finish_reason !== 'stop') {
+      return { usedProvider: false, text: '', model: null, providerRef: null, error: 'OpenRouter did not return a completed answer.' };
+    }
+    const text = typeof choice?.message?.content === 'string' ? choice.message.content.trim() : '';
     if (!text) {
       return { usedProvider: false, text: '', model: null, providerRef: null, error: 'OpenRouter returned an empty reply.' };
     }
@@ -172,6 +179,7 @@ export async function askAssistant(input: {
       error: null,
     };
   } catch (e: any) {
+    if (input.signal?.aborted) input.signal.throwIfAborted();
     return {
       usedProvider: false,
       text: '',

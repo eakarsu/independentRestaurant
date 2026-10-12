@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +65,7 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export default function PromotionsPage() {
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
   const [detailPromotion, setDetailPromotion] = useState<Promotion | null>(null);
@@ -88,12 +92,14 @@ export default function PromotionsPage() {
   }, []);
 
   const fetchPromotions = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const res = await fetch("/api/promotions");
-      const data = await res.json();
-      setPromotions(Array.isArray(data) ? data : []);
-    } catch {
-      toast({ title: "Error", description: "Failed to load promotions", variant: "destructive" });
+      const data = await readRecordArray<Promotion>(res);
+      setPromotions(data);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -247,6 +253,7 @@ export default function PromotionsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Promotions & Discounts" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchPromotions()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
@@ -641,7 +648,8 @@ export default function PromotionsPage() {
                   <Button variant="outline" onClick={() => { setIsDetailOpen(false); openEdit(detailPromotion); }}>
                     <Edit className="mr-2 h-4 w-4" /> Edit
                   </Button>
-                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
+                  <Button variant="destructive" onClick={() => { if (window.confirm(`Delete promotion ${detailPromotion.name}?`)) void handleDelete(detailPromotion.id); }}>Delete</Button>
+                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

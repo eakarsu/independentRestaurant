@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordPage } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useState, useEffect, useRef } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +32,7 @@ interface Order {
 export default function KitchenDisplayPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const idempotencyKeys = useRef(new Map<string, string>());
 
   useEffect(() => {
@@ -38,6 +42,8 @@ export default function KitchenDisplayPage() {
   }, []);
 
   const fetchOrders = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const [confirmedRes, preparingRes] = await Promise.all([
         fetch("/api/orders?status=CONFIRMED&pageSize=100"),
@@ -45,14 +51,14 @@ export default function KitchenDisplayPage() {
       ]);
       if (!confirmedRes.ok || !preparingRes.ok) throw new Error("Failed to load orders");
       const [confirmedJson, preparingJson] = await Promise.all([
-        confirmedRes.json(),
-        preparingRes.json(),
+        readRecordPage<Order>(confirmedRes),
+        readRecordPage<Order>(preparingRes),
       ]);
-      const confirmed: Order[] = Array.isArray(confirmedJson) ? confirmedJson : (confirmedJson?.data ?? []);
-      const preparing: Order[] = Array.isArray(preparingJson) ? preparingJson : (preparingJson?.data ?? []);
+      const confirmed = confirmedJson.data;
+      const preparing = preparingJson.data;
       setOrders([...confirmed, ...preparing]);
     } catch (error) {
-      console.error("Error fetching orders:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -129,6 +135,7 @@ export default function KitchenDisplayPage() {
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchOrders()} />
       <div className="bg-gray-800 p-4 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <ChefHat className="h-8 w-8 text-orange-500" />

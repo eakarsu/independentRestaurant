@@ -1,3 +1,4 @@
+import { recordMutation, recordMutationFailure } from "@/lib/record-mutation";
 import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -10,6 +11,7 @@ async function handleGET() {
     });
     return NextResponse.json(vendors);
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error fetching vendors:", error);
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
@@ -18,7 +20,7 @@ async function handleGET() {
 async function handlePOST(request: NextRequest) {
   try {
     const body = await request.json();
-    const vendor = await prisma.vendor.create({
+    const vendor = await recordMutation(request, tx => tx.vendor.create({
       data: {
         name: body.name,
         contactName: body.contactName,
@@ -29,9 +31,10 @@ async function handlePOST(request: NextRequest) {
         notes: body.notes,
         isActive: body.isActive ?? true,
       },
-    });
+    }));
     return NextResponse.json(vendor, { status: 201 });
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error creating vendor:", error);
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });
   }

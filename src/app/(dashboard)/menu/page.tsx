@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray, readRecordPage } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Header } from "@/components/layout/header";
@@ -79,6 +82,7 @@ function MenuPageContent() {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
@@ -137,6 +141,8 @@ function MenuPageContent() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -152,24 +158,17 @@ function MenuPageContent() {
       ]);
 
       const [categoriesData, itemsResult] = await Promise.all([
-        categoriesRes.json(),
-        itemsRes.json(),
+        readRecordArray<MenuCategory>(categoriesRes),
+        readRecordPage<MenuItem>(itemsRes),
       ]);
 
-      setCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      setCategories(categoriesData);
 
-      if (itemsResult.data) {
-        setItems(itemsResult.data);
-        setTotalItems(itemsResult.pagination.totalItems);
-        setTotalPages(itemsResult.pagination.totalPages);
-      } else {
-        const data = Array.isArray(itemsResult) ? itemsResult : [];
-        setItems(data);
-        setTotalItems(data.length);
-        setTotalPages(1);
-      }
-    } catch {
-      toast({ title: "Error", description: "Failed to load menu data", variant: "destructive" });
+      setItems(itemsResult.data);
+      setTotalItems(itemsResult.pagination.totalItems);
+      setTotalPages(itemsResult.pagination.totalPages);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -571,6 +570,7 @@ function MenuPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Menu Management" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div>
@@ -1077,6 +1077,7 @@ function MenuPageContent() {
                   >
                     <Edit className="mr-1 h-3 w-3" /> Edit
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsItemDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}
@@ -1144,6 +1145,7 @@ function MenuPageContent() {
                   >
                     <Edit className="mr-1 h-3 w-3" /> Edit Category
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsCategoryDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

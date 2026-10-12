@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -14,10 +14,14 @@ import { UtensilsCrossed, Loader2, AlertCircle } from "lucide-react";
 function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [demoLoading, setDemoLoading] = useState(false);
+  const [pending, setPending] = useState<'fill' | 'demo' | 'manual' | null>(null);
   const [demoEnabled, setDemoEnabled] = useState(false);
+  const [demoChecked, setDemoChecked] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const active = useRef<AbortController | null>(null);
+  const loading = pending === 'manual';
+  const demoLoading = pending === 'demo';
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
@@ -26,55 +30,46 @@ function LoginForm() {
     const controller = new AbortController();
     fetch('/api/auth/demo-credentials?status=1', { cache: 'no-store', signal: controller.signal })
       .then(async response => response.ok ? response.json() : { enabled: false })
-      .then(result => setDemoEnabled(result.enabled === true)).catch(() => {});
-    return () => controller.abort();
+      .then(result => { if (!controller.signal.aborted) setDemoEnabled(result.enabled === true); }).catch(() => {})
+      .finally(() => { if (!controller.signal.aborted) setDemoChecked(true); });
+    return () => { controller.abort(); active.current?.abort(); active.current = null; };
   }, []);
 
-  const fillDemoCredentials = async () => {
+  const authenticate = async (mode: 'fill' | 'demo' | 'manual') => {
+    if (active.current || (mode !== 'manual' && !demoEnabled)) return;
+    const controller = new AbortController();
+    active.current = controller;
+    setPending(mode);
     setError("");
-    setDemoLoading(true);
+    setNotice("");
     try {
-      const response = await fetch("/api/auth/demo-credentials", { cache: "no-store" });
-      if (!response.ok) throw new Error("Demo credentials unavailable");
-      const credentials = await response.json() as { email?: string; password?: string };
-      if (!credentials.email || !credentials.password) throw new Error("Demo credentials unavailable");
-      setEmail(credentials.email);
-      setPassword(credentials.password)
-
-      const __demo = await signIn('credentials', { email: credentials.email, password: credentials.password, redirect: false });
-      if (__demo?.error) { setError('Invalid email or password'); return; }
-      window.location.assign('/');
-    } catch {
-      setError("Demo credentials are unavailable");
+      let credentials = { email, password };
+      if (mode !== 'manual') {
+        const response = await fetch("/api/auth/demo-credentials", { credentials: 'same-origin', cache: "no-store", signal: controller.signal });
+        const configured = await response.json().catch(() => null);
+        if (!response.ok || configured?.enabled !== true || typeof configured.email !== 'string' || !configured.email.trim() || typeof configured.password !== 'string' || !configured.password) throw new Error("Demo credentials are unavailable. Enter your own credentials to sign in.");
+        if (controller.signal.aborted || active.current !== controller) return;
+        credentials = { email: configured.email, password: configured.password };
+        setEmail(credentials.email);
+        setPassword(credentials.password);
+      }
+      if (mode === 'fill') { setNotice('Configured credentials filled. Click Sign In when ready.'); return; }
+      const result = await signIn("credentials", { ...credentials, redirect: false, callbackUrl });
+      if (controller.signal.aborted || active.current !== controller) return;
+      if (result?.error) throw new Error("Invalid email or password");
+      if (result?.ok !== true) throw new Error("Sign in did not complete. Try again.");
+      router.push(callbackUrl);
+      router.refresh();
+    } catch (failure) {
+      if (!controller.signal.aborted && active.current === controller) setError(failure instanceof Error ? failure.message : "Could not reach sign-in. Try again.");
     } finally {
-      setDemoLoading(false);
+      if (active.current === controller) { active.current = null; setPending(null); }
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError("");
-
-    try {
-      const result = await signIn("credentials", {
-        email,
-        password,
-        redirect: false,
-        callbackUrl,
-      });
-
-      if (result?.error) {
-        setError("Invalid email or password");
-      } else if (result?.ok) {
-        router.push(callbackUrl);
-        router.refresh();
-      }
-    } catch {
-      setError("An error occurred. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+    void authenticate('manual');
   };
 
   return (
@@ -108,6 +103,7 @@ function LoginForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              disabled={pending !== null}
             />
           </div>
 
@@ -120,19 +116,24 @@ function LoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              disabled={pending !== null}
             />
           </div>
 
-          {demoEnabled && <button
+          {notice && <p role="status" className="text-sm text-primary">{notice}</p>}
+          <Button type="button" variant="outline" className="w-full" disabled={!demoEnabled || pending !== null} onClick={() => void authenticate('fill')}>{pending === 'fill' ? 'Filling credentials…' : 'Fill credentials'}</Button>
+          <button
             type="button"
-            onClick={async () => { await (fillDemoCredentials)(); window.setTimeout(() => { const form = document.querySelector("form"); if (form) form.requestSubmit(); }, 150); }}
-            disabled={demoLoading || loading}
+            onClick={() => void authenticate('demo')}
+            disabled={!demoEnabled || pending !== null}
             aria-label="Log In as Demo"
-            style={{ width: '100%', marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', border: '1px solid currentColor', background: 'transparent', cursor: 'pointer' }}
+            style={{ width: '100%', marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', border: '1px solid currentColor', cursor: 'pointer' }}
+            className="bg-primary text-primary-foreground disabled:opacity-60"
           >
             {demoLoading ? "Loading Demo Credentials…" : "Log In as Demo"}
-          </button>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          </button>
+          {!demoEnabled && <p role="status" className="text-sm text-muted-foreground">{demoChecked ? 'Demo credentials are unavailable on this host. Use your provisioned account.' : 'Checking demo credential configuration…'}</p>}
+          <Button type="submit" className="w-full" disabled={pending !== null}>
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

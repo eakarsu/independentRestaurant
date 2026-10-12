@@ -26,6 +26,7 @@ import {
 
 const CONSENT_COOKIE = "ir_assistant_consent";
 const CONSENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+class ConsentExpired extends Error {}
 
 function consentSecret(): string | null {
   return process.env.NEXTAUTH_SECRET || null;
@@ -82,6 +83,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    request.signal.throwIfAborted();
     const ip = getClientIp(request);
     if (!customerAiLimiter(ip).success || !customerAiDailyLimiter(ip).success) {
       return NextResponse.json(
@@ -158,7 +160,7 @@ export async function POST(request: NextRequest) {
     // (FAQ / uploaded documents) into the conversation. The assistant was
     // previously trained on menu rows only.
     const knowledge = await prisma.restaurantKnowledge.findMany({
-      where: { active: true, approvedById: { not: null } },
+      where: { active: true, approvedAt: { not: null }, approvedById: { not: null }, NOT: { approvedById: { equals: prisma.restaurantKnowledge.fields.authorId } } },
       select: { title: true, content: true, sourceUrl: true },
       take: 25,
       orderBy: { updatedAt: 'desc' },
@@ -204,17 +206,28 @@ export async function POST(request: NextRequest) {
       question: text,
       facts: { hours: ctx.hours, address: ctx.address, phone: ctx.phone, restaurant: ctx.restaurantName },
       sources,
+      signal: request.signal,
     });
+    request.signal.throwIfAborted();
     const result = ai.usedProvider
       ? { ...deterministic, answer: ai.text }
       : deterministic;
 
     // A lead is only recorded when the customer actually typed contact details.
-    let leadRecorded = false;
     const lead = result.lead;
-    if (lead.email || lead.phone) {
-      try {
-        await prisma.customerLead.create({
+    let leadRecorded = false;
+    let handoffTicket: { callbackId: string | null; notificationId: string | null } | null = null;
+    const verifyCurrentRequest = () => {
+      request.signal.throwIfAborted();
+      if (!verifyConsent(sessionId, request.cookies.get(CONSENT_COOKIE)?.value)) throw new ConsentExpired("Assistant consent expired; review the consent notice again.");
+    };
+    verifyCurrentRequest();
+    if (lead.email || lead.phone || result.handoff.handoff) {
+      const saved = await prisma.$transaction(async (tx) => {
+        verifyCurrentRequest();
+        let captured = false;
+        if (lead.email || lead.phone) {
+          await tx.customerLead.create({
           data: {
             sessionId,
             name: lead.name ?? null,
@@ -225,11 +238,23 @@ export async function POST(request: NextRequest) {
             note: text.slice(0, 500),
             source: "assistant",
           },
-        });
-        leadRecorded = true;
-      } catch {
-        leadRecorded = false;
-      }
+          });
+          verifyCurrentRequest();
+          captured = true;
+        }
+        let ticket: { callbackId: string | null; notificationId: string | null } | null = null;
+        if (result.handoff.handoff) {
+          const callback = await tx.customerLead.create({ data: { sessionId, name: result.lead.name ?? null, email: result.lead.email ?? null, phone: result.lead.phone ?? null, note: `HANDOFF: ${result.handoff.reason ?? "guest asked for a person"} | guest said: ${text.slice(0, 300)}`, source: "handoff" } });
+          verifyCurrentRequest();
+          const alert = await queueStaffAlert({ subject: "Guest needs a person", message: `Session ${sessionId}: ${result.handoff.reason ?? "guest requested a human"}\nGuest said: ${text.slice(0, 500)}`, metadata: { sessionId, callbackId: callback.id } }, tx);
+          verifyCurrentRequest();
+          ticket = { callbackId: callback.id, notificationId: alert?.id ?? null };
+        }
+        verifyCurrentRequest();
+        return { captured, ticket };
+      });
+      leadRecorded = saved.captured;
+      handoffTicket = saved.ticket;
     }
 
     const turns: ChatTurn[] = [
@@ -238,36 +263,7 @@ export async function POST(request: NextRequest) {
     ];
     const analysis = analyseTranscript(turns);
 
-    // Human handoff must escalate the conversation, not just flag it:
-    // capture a callback record and raise a queued staff alert.
-    let handoffTicket: { callbackId: string | null; notificationId: string | null } | null = null;
-    if (result.handoff.handoff) {
-      let callbackId: string | null = null;
-      try {
-        const handoffLead = await prisma.customerLead.create({
-          data: {
-            sessionId,
-            name: result.lead.name ?? null,
-            email: result.lead.email ?? null,
-            phone: result.lead.phone ?? null,
-            note: `HANDOFF: ${result.handoff.reason ?? 'guest asked for a person'} | guest said: ${text.slice(0, 300)}`,
-            source: 'handoff',
-          },
-        });
-        callbackId = handoffLead.id;
-      } catch { /* lead capture is best-effort */ }
-      let notificationId: string | null = null;
-      try {
-        const alert = await queueStaffAlert({
-          subject: 'Guest needs a person',
-          message: `Session ${sessionId}: ${result.handoff.reason ?? 'guest requested a human'}\nGuest said: ${text.slice(0, 500)}`,
-          metadata: { sessionId, callbackId },
-        });
-        notificationId = alert?.id ?? null;
-      } catch { /* alert is best-effort */ }
-      handoffTicket = { callbackId, notificationId };
-    }
-
+    verifyCurrentRequest();
     return NextResponse.json({
       sessionId,
       reply: result.answer,
@@ -292,6 +288,8 @@ export async function POST(request: NextRequest) {
       ],
     });
   } catch (e: any) {
+    if (request.signal.aborted) return NextResponse.json({ error: "Assistant request cancelled" }, { status: 499 });
+    if (e instanceof ConsentExpired) return NextResponse.json({ blocked: true, consentRequired: true, reason: e.message }, { status: 403 });
     return NextResponse.json({ error: e?.message ?? "Assistant failed" }, { status: 500 });
   }
 }

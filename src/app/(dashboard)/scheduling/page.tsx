@@ -1,5 +1,9 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+import { useRecordRequest } from "@/components/use-record-request";
+
 import { fetchCollection } from "@/lib/fetchCollection";
 
 import { useState, useEffect } from "react";
@@ -51,12 +55,15 @@ const POSITIONS = ["Server", "Bartender", "Host", "Line Cook", "Prep Cook", "Dis
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function SchedulingPage() {
+  const mutation = useRecordRequest();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [currentWeek, setCurrentWeek] = useState(getWeekStart(new Date()));
   const [selectedShift, setSelectedShift] = useState<Schedule | null>(null);
+  const [editingShift, setEditingShift] = useState<Schedule | null>(null);
 
   const [form, setForm] = useState({
     staffId: "",
@@ -91,6 +98,8 @@ export default function SchedulingPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const weekEnd = new Date(currentWeek);
       weekEnd.setDate(weekEnd.getDate() + 6);
@@ -102,14 +111,14 @@ export default function SchedulingPage() {
       ]);
 
       const [schedulesData, staffData] = await Promise.all([
-        schedulesRes.json(),
+        readRecordArray<Schedule>(schedulesRes),
         staffRes,
       ]);
 
-      setSchedules(Array.isArray(schedulesData) ? schedulesData : []);
+      setSchedules(schedulesData);
       setStaff(staffData);
-    } catch {
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -121,16 +130,22 @@ export default function SchedulingPage() {
       return;
     }
 
+    const controller = mutation.start(); if (!controller) return;
     try {
       const startTime = new Date(`${form.date}T${form.startTime}:00`);
       const endTime = new Date(`${form.date}T${form.endTime}:00`);
 
-      const res = await fetch("/api/schedules", {
-        method: "POST",
+      const originalDate = editingShift ? localDateInput(editingShift.date) : "";
+      if (editingShift && form.date === originalDate && form.startTime === new Date(editingShift.startTime).toTimeString().slice(0, 5)) startTime.setTime(+new Date(editingShift.startTime));
+      if (editingShift && form.date === originalDate && form.endTime === new Date(editingShift.endTime).toTimeString().slice(0, 5)) endTime.setTime(+new Date(editingShift.endTime));
+      if (endTime <= startTime) throw new Error("End time must follow start time.");
+      const res = await fetch(editingShift ? `/api/schedules/${editingShift.id}` : "/api/schedules", {
+        method: editingShift ? "PUT" : "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           staffId: form.staffId,
-          date: form.date,
+          date: editingShift && form.date === originalDate ? editingShift.date : editingShift ? new Date(`${form.date}T12:00:00`).toISOString() : form.date,
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
           position: form.position || staff.find(s => s.id === form.staffId)?.position || "Staff",
@@ -138,31 +153,52 @@ export default function SchedulingPage() {
         }),
       });
 
+      if (controller.signal.aborted) return;
       if (res.ok) {
-        toast({ title: "Success", description: "Shift scheduled" });
+        toast({ title: "Success", description: editingShift ? "Shift updated" : "Shift scheduled" });
         setIsDialogOpen(false);
+        setEditingShift(null);
         setForm({ staffId: "", date: "", startTime: "09:00", endTime: "17:00", position: "", notes: "" });
         fetchData();
       } else {
         throw new Error();
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to create schedule", variant: "destructive" });
+    } catch (error) {
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save schedule", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
+  };
+
+  function localDateInput(value: string) {
+    const date = new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  const editShift = (shift: Schedule) => {
+    setEditingShift(shift);
+    setForm({ staffId: shift.staffId, date: localDateInput(shift.date), startTime: new Date(shift.startTime).toTimeString().slice(0, 5), endTime: new Date(shift.endTime).toTimeString().slice(0, 5), position: shift.position, notes: shift.notes || "" });
+    setSelectedShift(null);
+    setIsDialogOpen(true);
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this shift?")) return;
+    const controller = mutation.start(); if (!controller) return;
     try {
-      const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/schedules/${id}`, { method: "DELETE", signal: controller.signal });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || "Failed to delete shift");
       }
+      if (controller.signal.aborted) return;
+      setSelectedShift(null);
       toast({ title: "Success", description: "Shift deleted" });
       fetchData();
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
+      if (!controller.signal.aborted) toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete", variant: "destructive" });
+    } finally {
+      mutation.finish(controller); if (controller.signal.aborted) void fetchData();
     }
   };
 
@@ -209,23 +245,26 @@ export default function SchedulingPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Staff Scheduling" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
+      {mutation.notice && <p role="status">{mutation.notice}</p>}
+      {mutation.busy && <Button type="button" variant="outline" onClick={mutation.cancel}>Cancel record request</Button>}
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
             <h2 className="text-2xl font-bold">Weekly Schedule</h2>
             <p className="text-muted-foreground">Manage staff shifts and scheduling</p>
           </div>
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isDialogOpen} onOpenChange={open => { if (!open) mutation.cancel(); setIsDialogOpen(open); }}>
             <DialogTrigger asChild>
-              <Button><Plus className="mr-2 h-4 w-4" /> Add Shift</Button>
+              <Button onClick={() => { setEditingShift(null); setForm({ staffId: "", date: "", startTime: "09:00", endTime: "17:00", position: "", notes: "" }); }}><Plus className="mr-2 h-4 w-4" /> Add Shift</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Schedule New Shift</DialogTitle>
-                <DialogDescription>Add a staff member to the schedule</DialogDescription>
+                <DialogTitle>{editingShift ? "Edit Shift" : "Schedule New Shift"}</DialogTitle>
+                <DialogDescription>{editingShift ? "Update this saved schedule draft" : "Add a staff member to the schedule"}</DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-4">
+              <fieldset disabled={mutation.busy} className="space-y-4">
                 <div className="grid gap-2">
                   <Label>Staff Member *</Label>
                   <Select value={form.staffId} onValueChange={(v) => setForm({ ...form, staffId: v })}>
@@ -273,6 +312,7 @@ export default function SchedulingPage() {
                   <Select value={form.position} onValueChange={(v) => setForm({ ...form, position: v })}>
                     <SelectTrigger><SelectValue placeholder="Same as default" /></SelectTrigger>
                     <SelectContent>
+                      {form.position && !POSITIONS.includes(form.position) && <SelectItem value={form.position}>{form.position}</SelectItem>}
                       {POSITIONS.map((p) => (
                         <SelectItem key={p} value={p}>{p}</SelectItem>
                       ))}
@@ -288,11 +328,11 @@ export default function SchedulingPage() {
                     placeholder="Optional notes"
                   />
                 </div>
-              </div>
+              </fieldset>
 
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleSubmit}>Schedule</Button>
+                <Button variant="outline" onClick={() => { mutation.cancel(); setIsDialogOpen(false); }}>Cancel</Button>
+                <Button disabled={mutation.busy} onClick={handleSubmit}>{editingShift ? "Save shift changes" : "Schedule"}</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -397,7 +437,7 @@ export default function SchedulingPage() {
         </Card>
 
         {selectedShift && (
-          <Dialog open onOpenChange={(open) => { if (!open) setSelectedShift(null); }}>
+          <Dialog open onOpenChange={(open) => { if (!open) { mutation.cancel(); setSelectedShift(null); } }}>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>
@@ -443,18 +483,19 @@ export default function SchedulingPage() {
                 )}
               </div>
               <DialogFooter>
+                <Button disabled={mutation.busy} onClick={() => editShift(selectedShift)}>Edit</Button>
                 <Button
                   variant="destructive"
+                  disabled={mutation.busy}
                   onClick={() => {
                     const id = selectedShift.id;
-                    setSelectedShift(null);
                     handleDelete(id);
                   }}
                 >
                   Delete shift
                 </Button>
-                <Button variant="outline" onClick={() => setSelectedShift(null)}>
-                  Close
+                <Button variant="outline" onClick={() => { mutation.cancel(); setSelectedShift(null); }}>
+                  Cancel
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { fetchCollection } from "@/lib/fetchCollection";
 
 import { useState, useEffect } from "react";
@@ -36,6 +39,7 @@ export default function TipsPage() {
   const [tips, setTips] = useState<TipRecord[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedTip, setSelectedTip] = useState<TipRecord | null>(null);
@@ -53,19 +57,21 @@ export default function TipsPage() {
   }, []);
 
   const fetchData = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const [tipsRes, staffRes] = await Promise.all([
         fetch("/api/tips"),
         fetchCollection<Staff>("/api/staff"),
       ]);
       const [tipsData, staffData] = await Promise.all([
-        tipsRes.json(),
+        readRecordArray<TipRecord>(tipsRes),
         staffRes,
       ]);
-      setTips(Array.isArray(tipsData) ? tipsData : []);
+      setTips(tipsData);
       setStaff(staffData);
-    } catch {
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -138,6 +144,7 @@ export default function TipsPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Tip Distribution" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">

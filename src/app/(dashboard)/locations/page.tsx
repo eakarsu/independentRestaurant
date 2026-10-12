@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -63,6 +66,7 @@ const defaultHours = {
 export default function LocationsPage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
@@ -83,12 +87,14 @@ export default function LocationsPage() {
   });
 
   const fetchLocations = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const response = await fetch("/api/locations");
-      const data = await response.json();
-      setLocations(Array.isArray(data) ? data : []);
+      const data = await readRecordArray<Location>(response);
+      setLocations(data);
     } catch (error) {
-      console.error("Error fetching locations:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -202,6 +208,7 @@ export default function LocationsPage() {
 
   return (
     <div className="space-y-6">
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchLocations()} />
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Locations</h1>
@@ -621,7 +628,8 @@ export default function LocationsPage() {
               </div>
             </>
           )}
-        </DialogContent>
+        <Button type="button" variant="outline" onClick={() => setSelectedLocation(null)}>Cancel</Button>
+                </DialogContent>
       </Dialog>
     </div>
   );

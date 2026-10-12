@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { fetchCollection } from "@/lib/fetchCollection";
 
 import { useState, useEffect } from "react";
@@ -95,6 +98,7 @@ export default function PerformancePage() {
   const [records, setRecords] = useState<PerformanceRecord[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedStaff, setSelectedStaff] = useState<StaffSummary | null>(null);
   const [showAddRecord, setShowAddRecord] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<PerformanceRecord | null>(null);
@@ -110,6 +114,8 @@ export default function PerformancePage() {
   });
 
   const fetchData = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const [summaryRes, recordsRes, staffRes] = await Promise.all([
         fetch(`/api/performance/summary?days=${timePeriod}`),
@@ -117,15 +123,15 @@ export default function PerformancePage() {
         fetchCollection<Staff>("/api/staff"),
       ]);
       const [summaryData, recordsData, staffData] = await Promise.all([
-        summaryRes.json(),
-        recordsRes.json(),
+        readRecordArray<StaffSummary>(summaryRes),
+        readRecordArray<PerformanceRecord>(recordsRes),
         staffRes,
       ]);
-      setSummaries(Array.isArray(summaryData) ? summaryData : []);
-      setRecords(Array.isArray(recordsData) ? recordsData : []);
+      setSummaries(summaryData);
+      setRecords(recordsData);
       setStaff(staffData);
     } catch (error) {
-      console.error("Error fetching data:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -214,6 +220,7 @@ export default function PerformancePage() {
 
   return (
     <div className="space-y-6">
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Employee Performance</h1>
@@ -639,7 +646,8 @@ export default function PerformancePage() {
               </div>
             </>
           )}
-        </DialogContent>
+        <Button type="button" variant="outline" onClick={() => setSelectedStaff(null)}>Cancel</Button>
+                </DialogContent>
       </Dialog>
 
       {/* Full detail for the selected review, with its actions. */}

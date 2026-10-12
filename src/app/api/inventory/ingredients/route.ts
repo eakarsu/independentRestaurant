@@ -1,3 +1,4 @@
+import { recordMutation, recordMutationFailure } from "@/lib/record-mutation";
 import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -10,6 +11,7 @@ async function handleGET() {
     });
     return NextResponse.json(ingredients);
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error fetching ingredients:", error);
     return NextResponse.json({ error: "Failed to fetch ingredients" }, { status: 500 });
   }
@@ -18,7 +20,7 @@ async function handleGET() {
 async function handlePOST(request: NextRequest) {
   try {
     const body = await request.json();
-    const ingredient = await prisma.ingredient.create({
+    const ingredient = await recordMutation(request, tx => tx.ingredient.create({
       data: {
         name: body.name,
         unit: body.unit,
@@ -29,9 +31,10 @@ async function handlePOST(request: NextRequest) {
         vendorId: body.vendorId,
       },
       include: { vendor: true },
-    });
+    }));
     return NextResponse.json(ingredient, { status: 201 });
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error creating ingredient:", error);
     return NextResponse.json({ error: "Failed to create ingredient" }, { status: 500 });
   }

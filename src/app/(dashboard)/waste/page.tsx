@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +40,7 @@ export default function WastePage() {
   const [records, setRecords] = useState<WasteRecord[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedWaste, setSelectedWaste] = useState<WasteRecord | null>(null);
@@ -53,19 +57,21 @@ export default function WastePage() {
   }, []);
 
   const fetchData = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const [wasteRes, ingredientsRes] = await Promise.all([
         fetch("/api/waste"),
         fetch("/api/ingredients"),
       ]);
       const [wasteData, ingredientsData] = await Promise.all([
-        wasteRes.json(),
-        ingredientsRes.json(),
+        readRecordArray<WasteRecord>(wasteRes),
+        readRecordArray<Ingredient>(ingredientsRes),
       ]);
-      setRecords(Array.isArray(wasteData) ? wasteData : []);
-      setIngredients(Array.isArray(ingredientsData) ? ingredientsData : []);
-    } catch {
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+      setRecords(wasteData);
+      setIngredients(ingredientsData);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -157,6 +163,7 @@ export default function WastePage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Waste Tracking" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">

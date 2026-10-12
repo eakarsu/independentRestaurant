@@ -1,3 +1,4 @@
+import { recordMutation, recordMutationFailure } from "@/lib/record-mutation";
 import { withAccess, MANAGEMENT, OPERATIONS } from "@/lib/commerce/access";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -27,6 +28,7 @@ async function handleGET(request: NextRequest, props: { params: Promise<{ id: st
 
     return NextResponse.json(recipe);
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error fetching recipe:", error);
     return NextResponse.json(
       { error: "Failed to fetch recipe" },
@@ -39,7 +41,7 @@ async function handlePUT(request: NextRequest, props: { params: Promise<{ id: st
   const params = await props.params;
   try {
     const body = await request.json();
-    const recipe = await prisma.recipe.update({
+    const recipe = await recordMutation(request, tx => tx.recipe.update({
       where: { id: params.id },
       data: body,
       include: {
@@ -54,9 +56,10 @@ async function handlePUT(request: NextRequest, props: { params: Promise<{ id: st
           },
         },
       },
-    });
+    }));
     return NextResponse.json(recipe);
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error updating recipe:", error);
     return NextResponse.json(
       { error: "Failed to update recipe" },
@@ -68,11 +71,12 @@ async function handlePUT(request: NextRequest, props: { params: Promise<{ id: st
 async function handleDELETE(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    await prisma.recipe.delete({
+    await recordMutation(request, tx => tx.recipe.delete({
       where: { id: params.id },
-    });
+    }));
     return NextResponse.json({ success: true });
   } catch (error) {
+    const cancelled = recordMutationFailure(error); if (cancelled) return cancelled;
     console.error("Error deleting recipe:", error);
     return NextResponse.json(
       { error: "Failed to delete recipe" },

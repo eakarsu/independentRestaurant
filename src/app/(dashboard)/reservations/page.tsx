@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordArray } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useMutationFetch } from "@/components/operations/use-mutation-fetch";
 import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
@@ -99,7 +102,9 @@ function ReservationsPageContent() {
   const [isTableDialogOpen, setIsTableDialogOpen] = useState(false);
   const [isWaitlistDialogOpen, setIsWaitlistDialogOpen] = useState(false);
   const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [editingTable, setEditingTable] = useState<TableData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   // Detail sheet states
   const [isReservationDetailOpen, setIsReservationDetailOpen] = useState(false);
@@ -171,6 +176,8 @@ function ReservationsPageContent() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError('');
+
     try {
       const [reservationsRes, tablesRes, waitlistRes] = await Promise.all([
         fetch(`/api/reservations?date=${selectedDate.toISOString()}`),
@@ -180,17 +187,16 @@ function ReservationsPageContent() {
 
       if (![reservationsRes, tablesRes, waitlistRes].every(r=>r.ok)) throw new Error("Unable to load reservation data");
       const [reservationsData, tablesData, waitlistData] = await Promise.all([
-        reservationsRes.json(),
-        tablesRes.json(),
-        waitlistRes.json(),
+        readRecordArray<Reservation>(reservationsRes),
+        readRecordArray<TableData>(tablesRes),
+        readRecordArray<WaitlistEntry>(waitlistRes),
       ]);
 
-      setReservations(Array.isArray(reservationsData) ? reservationsData : []);
-      setTables(Array.isArray(tablesData) ? tablesData : []);
-      setWaitlist(Array.isArray(waitlistData) ? waitlistData : []);
+      setReservations(reservationsData);
+      setTables(tablesData);
+      setWaitlist(waitlistData);
     } catch (error) {
-      console.error("Error fetching data:", error);
-      toast({ title: "Error", description: "Failed to load data", variant: "destructive" });
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -316,23 +322,24 @@ function ReservationsPageContent() {
 
   const handleCreateTable = async () => {
     try {
-      const response = await mutationFetch("/api/tables", {
-        method: "POST",
+      const response = await mutationFetch(editingTable ? `/api/tables/${editingTable.id}` : "/api/tables", {
+        method: editingTable ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(tableFormData),
       });
 
       if (response.ok) {
-        toast({ title: "Success", description: "Table created successfully" });
+        toast({ title: "Success", description: editingTable ? "Table updated" : "Table created successfully" });
         setIsTableDialogOpen(false);
+        setEditingTable(null);
         setTableFormData({ number: 1, capacity: 4, section: "Main" });
         fetchData();
       } else {
-        throw new Error("Failed to create table");
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to save table");
       }
     } catch (error) {
-      console.error("Error creating table:", error);
-      toast({ title: "Error", description: "Failed to create table", variant: "destructive" });
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to save table", variant: "destructive" });
     }
   };
 
@@ -477,6 +484,7 @@ function ReservationsPageContent() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Reservations" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchData()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto mx-auto w-full max-w-7xl">
         <Tabs defaultValue="reservations" className="space-y-4">
           <div className="flex items-center justify-between">
@@ -800,14 +808,14 @@ function ReservationsPageContent() {
               </div>
               <Dialog open={isTableDialogOpen} onOpenChange={setIsTableDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button>
+                  <Button onClick={() => { setEditingTable(null); setTableFormData({ number: 1, capacity: 4, section: "Main" }); }}>
                     <Plus className="mr-2 h-4 w-4" /> Add Table
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Add New Table</DialogTitle>
-                    <DialogDescription>Add a new table to your floor plan.</DialogDescription>
+                    <DialogTitle>{editingTable ? "Edit Table" : "Add New Table"}</DialogTitle>
+                    <DialogDescription>{editingTable ? "Update this saved floor-plan configuration." : "Add a new table to your floor plan."}</DialogDescription>
                   </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
@@ -829,6 +837,7 @@ function ReservationsPageContent() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                          {![2, 4, 6, 8, 10, 12].includes(tableFormData.capacity) && <SelectItem value={String(tableFormData.capacity)}>{tableFormData.capacity} seats</SelectItem>}
                           {[2, 4, 6, 8, 10, 12].map((size) => (
                             <SelectItem key={size} value={size.toString()}>
                               {size} seats
@@ -847,6 +856,7 @@ function ReservationsPageContent() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
+                          {tableFormData.section && !["Main", "Patio", "Bar", "Private"].includes(tableFormData.section) && <SelectItem value={tableFormData.section}>{tableFormData.section}</SelectItem>}
                           <SelectItem value="Main">Main Dining</SelectItem>
                           <SelectItem value="Patio">Patio</SelectItem>
                           <SelectItem value="Bar">Bar Area</SelectItem>
@@ -857,7 +867,7 @@ function ReservationsPageContent() {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsTableDialogOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreateTable}>Add Table</Button>
+                    <Button onClick={handleCreateTable}>{editingTable ? "Save table changes" : "Add Table"}</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -1165,11 +1175,12 @@ function ReservationsPageContent() {
                     <Edit className="mr-1 h-3 w-3" /> Edit
                   </Button>
                   <Button size="sm" variant="destructive" onClick={() => { handleUpdateReservationStatus(detailReservation.id, "CANCELLED"); setIsReservationDetailOpen(false); }}>
-                    <XCircle className="mr-1 h-3 w-3" /> Cancel
+                    <XCircle className="mr-1 h-3 w-3" /> Cancel reservation
                   </Button>
                   <Button size="sm" variant="destructive" onClick={() => handlePermanentDelete(detailReservation.id)}>
                     <Trash2 className="mr-1 h-3 w-3" /> Delete
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsReservationDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}
@@ -1228,7 +1239,8 @@ function ReservationsPageContent() {
                 </div>
               </>
             )}
-          </DialogContent>
+          {detailTable && <DialogFooter className="flex-wrap gap-2"><Button onClick={() => { setEditingTable(detailTable); setTableFormData({ number: detailTable.number, capacity: detailTable.capacity, section: detailTable.section }); setIsTableDetailOpen(false); setIsTableDialogOpen(true); }}>Edit</Button><Button variant="destructive" onClick={() => { if (window.confirm("Archive this table? Its reservation history is retained.")) { void handleUpdateTableStatus(detailTable.id, "OUT_OF_SERVICE"); setIsTableDetailOpen(false); } }}>Archive</Button><Button type="button" variant="outline" onClick={() => setIsTableDetailOpen(false)}>Cancel</Button></DialogFooter>}
+                </DialogContent>
         </Dialog>
 
         {/* Waitlist Detail Dialog */}
@@ -1269,12 +1281,14 @@ function ReservationsPageContent() {
                 </div>
 
                 <DialogFooter className="gap-2">
+                  <Button variant="outline" disabled title="Guest details are retained; the native API supports queue-status updates only">Edit</Button>
                   <Button onClick={() => { handleSeatWaitlistEntry(detailWaitlistEntry.id); setIsWaitlistDetailOpen(false); }} className="flex-1">
                     <UserCheck className="mr-2 h-4 w-4" /> Seat Guest
                   </Button>
                   <Button variant="destructive" onClick={() => { handleRemoveFromWaitlist(detailWaitlistEntry.id); setIsWaitlistDetailOpen(false); }}>
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-4 w-4" /> Remove from queue
                   </Button>
+                <Button type="button" variant="outline" onClick={() => setIsWaitlistDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}

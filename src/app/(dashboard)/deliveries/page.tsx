@@ -1,5 +1,8 @@
 "use client";
 
+import { readRecordPage } from "@/lib/record-response";
+import { RecordLoadNotice } from "@/components/RecordLoadNotice";
+
 import { useState, useEffect } from "react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,6 +49,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function DeliveriesPage() {
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<DeliveryOrder | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
 
@@ -57,17 +61,15 @@ export default function DeliveriesPage() {
   }, []);
 
   const fetchOrders = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       // /api/orders returns a paginated object ({ data, pagination }), not a bare array.
       const res = await fetch("/api/orders?type=DELIVERY&pageSize=100");
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Failed to load deliveries");
-      }
-      const json = await res.json();
-      setOrders(Array.isArray(json) ? json : (json?.data ?? []));
+      const json = await readRecordPage<DeliveryOrder>(res);
+      setOrders(json.data);
     } catch (error) {
-      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to load deliveries", variant: "destructive" });
+      setLoadError(error instanceof Error ? error.message : "Could not load records. Retry loading.");
     } finally {
       setLoading(false);
     }
@@ -136,6 +138,7 @@ export default function DeliveriesPage() {
   return (
     <div className="flex flex-col h-full">
       <Header title="Delivery Tracking" />
+      <RecordLoadNotice error={loadError} busy={loading} onRetry={() => void fetchOrders()} />
       <div className="flex-1 p-6 space-y-6 overflow-auto">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
@@ -320,7 +323,9 @@ export default function DeliveriesPage() {
                 </div>
 
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button>
+                  <Button variant="outline" disabled title="Order contents are retained; use the authorized delivery/status actions">Edit</Button>
+                  <Button variant="outline" disabled title="Order and delivery evidence cannot be deleted">Delete</Button>
+                  <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cancel</Button>
                 </DialogFooter>
               </>
             )}
