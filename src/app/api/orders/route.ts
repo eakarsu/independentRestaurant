@@ -59,7 +59,9 @@ export async function GET(request: NextRequest) {
     const sortBy = sortByParam ?? "createdAt";
     const sortDirection = sortDirectionParam === "asc" ? "asc" : "desc";
 
+    const search = searchParams.get("search") ?? searchParams.get("q") ?? undefined;
     const where = {
+      ...(search ? { OR: [{ orderNumber: { contains: search, mode: "insensitive" as const } }, { customer: { firstName: { contains: search, mode: "insensitive" as const } } }, { customer: { lastName: { contains: search, mode: "insensitive" as const } } }, { customer: { email: { contains: search, mode: "insensitive" as const } } }] } : {}),
       ...(status ? { status: status as never } : {}),
       ...(searchParams.get("scope") === "active"
         ? { status: { notIn: ["COMPLETED", "CANCELLED"] } as never }
